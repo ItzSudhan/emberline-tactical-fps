@@ -4,10 +4,8 @@
 //
 //   node tools/soak.mjs [matches=20] [difficulty=normal]
 
-import { SIM_DT } from '../game/src/config.js';
-import { createState, eventAt } from '../game/src/state.js';
-import { setupMatch } from '../game/src/round.js';
-import { stepSim } from '../game/src/sim.js';
+import { SIM_DT, createState, eventAt } from '../game/state.js';
+import { setupMatch, stepSim } from '../game/rounds-halftime.js';
 
 const matches = Number(process.argv[2] ?? 20);
 const difficulty = process.argv[3] ?? 'normal';

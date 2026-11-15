@@ -1,30 +1,30 @@
 <!doctype html>
 <!--
-  EMBERLINE · Kilnworks. A round-based 5v5 tactical shooter: the Stokers plant the Igniter at Kiln Hall (A)
-  or Silo Court (B), the Kilnwatch hold both sites and defuse it. First squad to seven rounds, sides swap
-  after six. Everything on screen is made by the code below: the map is a grid in mapdata.js, every texture
-  is painted on a canvas, every sound is synthesised, and no image, model or audio file ships.
+  EMBERLINE · Kilnworks. A round-based 5v5 tactical shooter: the Stokers plant the Igniter (the bomb) at
+  Kiln Hall (A) or Silo Court (B), the Kilnwatch hold both sites and defuse it. First squad to seven
+  rounds, sides swap after six. Everything on screen is made by this code: the map is a grid, every
+  texture is painted on a canvas, every sound is synthesised, and no image, model or audio file ships.
 
-  A map of the code, in the order the modules are loaded:
-    main.js      frame loop: fixed 60 Hz simulation steps from an accumulator, interpolated rendering
-    config.js    every tunable: movement, round rules, economy, six guns, armour, three grenades, bot skill
-    state.js     the one state object, plus the event and noise rings other systems read
-    mapdata.js   Kilnworks: named rooms, two sites with three ways into each, cover, holds and routes
-    nav.js       A* over the grid for the bots
-    sim.js       one tick: bots think, bodies move, weapons fire, grenades fly, the round advances
-    actors.js    movement with acceleration, friction, counter-strafing, crouch, jump; armour and damage
-    physics.js   collision and ray casts against the height grid; nothing allocates
-    weapons.js   spread that punishes moving, jumping and spraying; climbing recoil; head, body and leg
-                 hit volumes; rounds that punch through crates at a cost
-    grenades.js  bouncing frag, smoke that blocks sight, flash that blinds whoever faces it
-    round.js     buy phase, live, post-round; plant, fuse, defuse; win, loss-streak and kill money; half time
-    bots.js      sight cones, hearing, reaction time, aim that settles; routes, executes with smoke and
-                 flash, anchors that hold angles and rotate on calls, retakes, cover when hurt or reloading
-    hud.js       health, armour, money, ammunition, round clock, score, minimap, kill feed, buy menu, scoreboard
-    view.js, mapview.js, textures.js, fx.js, models.js, post.js   everything drawn
-    input.js, controls.js, audio.js   keyboard and mouse, and synthesised sound
-  The simulation imports nothing from three.js or the DOM; tools/soak.mjs in the repository plays whole
-  bot matches in Node to balance it. The screenshots are unstaged frames of bot matches (see main.js, ?demo).
+  The modules, in the order they load (one job each):
+    fixed-step-loop.js       boot and frame loop: fixed 60 Hz simulation ticks, interpolated rendering
+    state.js                 the one state object, the event ring and the noise ring
+    map-kilnworks.js         the map: named rooms, two sites with three ways into each, cover, holds, routes
+    mouselook.js             mouse look and keyboard movement into the same input record bots fill
+    movement-collision.js    acceleration, friction, counter-strafe, crouch, jump; collision and ray casts
+    economy-buy.js           round, loss-streak, kill and plant money; the buy menu's shop
+    weapons.js               six guns: fire, reload, finite ammunition, switching, scoping
+    recoil-spread.js         spread that punishes moving, jumping and spraying; a learnable recoil climb
+    headshot-hitboxes.js     head, torso and leg hit volumes, armour, bullets through soft cover
+    grenades-smoke-flash.js  bouncing frag, smoke that blocks sight, flash that blinds
+    bomb-plant-defuse.js     carry, drop, plant, fuse, defuse (kit), detonation
+    hud.js                   health, armour, money, ammunition, clock, score, minimap, feed, radio, menus
+    rounds-halftime.js       buy phase, live, result; win conditions; half-time side swap; stepSim
+    bots.js                  bot brains: reaction, aim that settles, peeking, bursts, cover
+    sight-hearing.js         what bots know: view cones, lines of sight, smoke, and what they hear
+    bot-routes.js            routes, executes, holds, rotations, retakes, on A* paths (nav.js)
+    view.js, mapview.js, textures.js, fx.js, models.js, post.js, input.js, audio.js   everything drawn and heard
+  The simulation imports nothing from three.js or the DOM: tools/soak.mjs in the repository plays whole
+  bot matches in Node. The screenshots are unstaged frames of bot matches (?demo, tools/shots.mjs).
 -->
 <html lang="en">
 <head>
@@ -35,9 +35,10 @@
 <link rel="stylesheet" href="./style.min.css">
 </head>
 <body>
-<div id="game"></div>
+<div id="game" aria-label="Emberline: first-person view of a 5v5 plant-and-defuse round on Kilnworks"></div>
 
 <div id="hud" class="hidden">
+  <div id="tags"></div>
   <div id="topbar">
     <div class="team att" id="team-att"><div><div class="tname">STOKERS</div><div class="pips" id="pips-att"></div></div><b id="score-att">0</b></div>
     <div id="clock"><span id="round-label">ROUND 1</span><b id="timer">1:45</b><span id="phase-label">BUY</span></div>
@@ -58,7 +59,7 @@
     <div class="stat" id="armor"><small>ARMOUR</small><b id="armor-val">0</b><div class="bar"><i id="armor-bar"></i></div></div>
     <div class="stat" id="money"><small>FUNDS</small><b id="money-val">$800</b></div>
   </div>
-  <div id="carry" class="hidden">CARRYING THE IGNITER · HOLD E ON A SITE</div>
+  <div id="stance"></div>
   <div id="weapon"><small id="weapon-name">Pike-9</small><div id="ammo">12 <span>/ 48</span></div><div id="slots"></div></div>
   <div id="scope" class="hidden"></div>
   <div id="flash"></div>
@@ -75,7 +76,7 @@
 
 <div id="buy" class="overlay hidden">
   <section class="panel">
-    <h2>Requisition <span id="buy-funds"></span></h2>
+    <h2>Requisition · buy menu <span id="buy-funds"></span></h2>
     <p id="buy-sub"></p>
     <div id="buy-grid"></div>
     <div id="buy-squad"></div>
@@ -116,6 +117,6 @@
   }
 }
 </script>
-<script type="module" src="./src/main.js"></script>
+<script type="module" src="./fixed-step-loop.js"></script>
 </body>
 </html>

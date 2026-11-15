@@ -4,8 +4,8 @@
 // cyan visors; the visors glow, so a silhouette reads at a glance even in deep shade.
 
 import * as THREE from 'three';
-import { SIDES } from './config.js';
-import { lerp } from './util.js';
+import { SIDES } from './state.js';
+import { lerp } from './movement-collision.js';
 
 // A box or a cylinder along the barrel axis (-z), already moved into place and painted one colour.
 function tint(geo, hex) {

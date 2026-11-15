@@ -2,7 +2,7 @@
 // neighbour by at most half a metre; crates are cover to them, not floor. Cells hugging walls cost
 // a little more, so routes run down the middle of lanes instead of scraping corners.
 
-import { KIND, cellCenter } from './mapdata.js';
+import { KIND, cellCenter } from './map-kilnworks.js';
 
 let N = 0, COLS = 0, H = null;
 let walk, extra, g, f, came, stamp, closed, heap;

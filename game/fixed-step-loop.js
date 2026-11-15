@@ -1,20 +1,21 @@
-// Emberline boot and frame loop. The simulation advances in fixed SIM_DT ticks from an accumulator;
-// rendering interpolates between the last two ticks. Systems never call each other: the simulation
-// mutates `state`, and the view, HUD and audio read it and drain its event ring once a frame.
+// Emberline boot and frame loop. The simulation advances in fixed SIM_DT ticks from an accumulator
+// and never sees a frame time; rendering interpolates between the last two ticks. Systems never
+// call each other: stepSim mutates `state`, and the view, HUD and audio read it and drain its event
+// ring once a frame. Nothing in the loop allocates: events, particles, tracers and marks are pooled.
 
-import { SIM_DT, SIDES, SHOP } from './config.js';
-import { createState, eventAt, EVENT_CAPACITY } from './state.js';
-import { stepSim } from './sim.js';
-import { setupMatch, buyItem } from './round.js';
-import { eyeHeight } from './actors.js';
-import { clearLine } from './physics.js';
-import { zoneAt, ZONE } from './mapdata.js';
+import { SIM_DT, SIDES, createState, eventAt, EVENT_CAPACITY } from './state.js';
+import { ZONE, zoneAt } from './map-kilnworks.js';
+import { createControls } from './mouselook.js';
+import { eyeHeight, clearLine } from './movement-collision.js';
+import { SHOP, buyItem } from './economy-buy.js';
+import { BOMB } from './bomb-plant-defuse.js';
 import { createHud } from './hud.js';
+import { setupMatch, stepSim } from './rounds-halftime.js';
 import { createView } from './view.js';
 import { createInput } from './input.js';
-import { createControls } from './controls.js';
 import { createAudio } from './audio.js';
 
+const MAX_FRAME = 0.1; // seconds: a stalled tab never makes the fixed-step simulation catch up more than this
 const params = new URLSearchParams(location.search);
 const $ = (id) => document.getElementById(id);
 
@@ -45,6 +46,7 @@ const app = {
   pauseWhen: null,
 };
 const muzzle = { x: 0, y: 0, z: 0 };
+const seen = { subject: null, fov: 78, onSite: false, project: view.project }; // what the HUD is told about the view, reused every frame
 
 // ---------- menu ----------
 function choice(attr, key) {
@@ -186,7 +188,7 @@ function consumeEvents(state, subject) {
         break;
       case 'step': case 'land': audio.step(e.x, e.z, mine); break;
       case 'reload': audio.click(e.x, e.z, 0.8); break;
-      case 'reloaded': case 'pickup': audio.click(e.x, e.z, 1.2); break;
+      case 'reloaded': case 'pickup': case 'planting': case 'defusing': audio.click(e.x, e.z, 1.2); break;
       case 'dry': audio.dry(e.x, e.z); break;
       case 'scope': if (mine) audio.scope(); break;
       case 'throw': case 'bounce': audio.bounce(e.x, e.z); break;
@@ -194,13 +196,13 @@ function consumeEvents(state, subject) {
       case 'smoke': audio.smoke(e.x, e.z); break;
       case 'flash': view.fx.flash(e.x, e.y, e.z); audio.flashbang(e.x, e.z, subject.flashed); break;
       case 'beep': audio.beep(e.x, e.z); break;
-      case 'planted': audio.planted(); hud.banner('Igniter planted', `Site ${state.bomb.site} · 40 seconds on the fuse`, SIDES.att.css); break;
+      case 'planted': audio.planted(); hud.banner('Igniter planted', `Site ${state.bomb.site} · ${BOMB.fuse} seconds on the fuse`, SIDES.att.css); break;
       case 'defused': audio.planted(); break;
       case 'igniterBlast': view.fx.blast(e.x, e.y, e.z, true); audio.explosion(e.x, e.z); view.shake(0.08); break;
       case 'roundEnd': {
         const r = state.match.result;
         audio.stinger(r.winner === p.team);
-        hud.banner(`${SIDES[r.winner].name} take the round`, `${r.reason} · MVP ${r.mvp.name}, ${r.mvp.roundKills} kills`, SIDES[r.winner].css);
+        hud.banner(`${SIDES[r.winner].name} take the round`, `${r.reason} · MVP ${r.mvp.name} · win +$${r.winPay}, loss +$${r.lossPay}`, SIDES[r.winner].css);
         break;
       }
       case 'roundStart':
@@ -229,7 +231,7 @@ function showOver(state) {
 }
 
 function frame(now) {
-  const dt = app.hold ? 0 : Math.min(0.1, (now - app.last) / 1000);
+  const dt = app.hold ? 0 : Math.min(MAX_FRAME, (now - app.last) / 1000);
   app.last = now;
   const state = app.state;
   if (app.mode === 'menu') {
@@ -265,7 +267,10 @@ function frame(now) {
   hud.showBoard(input.down('Tab') || state.match.phase === 'over');
   const zone = zoneAt(state.map, p.pos.x, p.pos.z);
   view.render(state, alpha, dt, subject, false);
-  hud.update(state, dt, { subject, fov: view.fov, onSite: zone === ZONE.siteA || zone === ZONE.siteB });
+  seen.subject = subject;
+  seen.fov = view.fov;
+  seen.onSite = zone === ZONE.siteA || zone === ZONE.siteB;
+  hud.update(state, dt, seen);
   requestAnimationFrame(frame);
 }
 

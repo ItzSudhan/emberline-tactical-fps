@@ -16,7 +16,9 @@ import { join } from 'node:path';
 const CHROME = process.env.CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function launch({ width = 1280, height = 720, gpu = true } = {}) {
+// `width` x `height` is the page's size in CSS pixels; `scale` is the device pixel ratio, so a
+// screenshot is width * scale pixels wide.
+export async function launch({ width = 1280, height = 720, scale = 1, gpu = true } = {}) {
   const profile = mkdtempSync(join(tmpdir(), 'chrome-shots-'));
   const args = [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${width},${height}`,
@@ -79,7 +81,7 @@ export async function launch({ width = 1280, height = 720, gpu = true } = {}) {
     await cmd('Log.enable');
     await cmd('Network.enable');
     await cmd('Page.enable');
-    await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
+    await cmd('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: scale, mobile: false });
     await cmd('Page.navigate', { url });
 
     const page = {

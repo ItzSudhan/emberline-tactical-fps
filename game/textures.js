@@ -2,7 +2,7 @@
 // crate planks, teal shipping steel, brick, stencil signs. No image files ship with the game.
 
 import * as THREE from 'three';
-import { createRng } from './util.js';
+import { createRng } from './state.js';
 
 const rng = createRng(7);
 

@@ -2,14 +2,13 @@
 // It reads the simulation state and interpolates actor positions between the last two ticks.
 
 import * as THREE from 'three';
-import { BODY, WEAPONS } from './config.js';
+import { heldWeapon } from './state.js';
+import { BODY, eyeHeight, lerp } from './movement-collision.js';
 import { buildWorld } from './mapview.js';
 import { createFx } from './fx.js';
 import { createSoldier, updateSoldier, createViewmodel, createIgniterModel } from './models.js';
 import { createPost } from './post.js';
-import { eyeHeight } from './actors.js';
 import { softDot } from './textures.js';
-import { lerp } from './util.js';
 
 const BASE_FOV = 78;
 
@@ -56,6 +55,7 @@ export function createView(container, map) {
   const sunDir = new THREE.Vector3().copy(world.sun.position).sub(world.sun.target.position).normalize();
   const tmpQ = new THREE.Quaternion();
   const tmpV = new THREE.Vector3();
+  const screen = { x: 0, y: 0 };
   let fov = BASE_FOV;
 
   function bindActors(state) {
@@ -69,8 +69,8 @@ export function createView(container, map) {
   }
 
   function pickViewmodel(subject) {
-    const w = subject.current === 'primary' ? subject.primary : subject.current === 'secondary' ? subject.secondary : null;
-    const kind = subject.current === 'nade' ? 'nade' : w.def.kind;
+    const w = heldWeapon(subject);
+    const kind = w ? w.def.kind : 'nade';
     const key = `${kind}:${subject.team}`;
     if (key === vmKey) return;
     vmKey = key;
@@ -97,6 +97,15 @@ export function createView(container, map) {
     kick(strength) { vmState.kick = Math.min(1.6, vmState.kick + strength); vmState.flash = 0.045; },
     shake(amount) { vmState.shake = Math.max(vmState.shake, amount); },
     sway(dx, dy) { vmState.swayX += dx; vmState.swayY += dy; },
+    // Where a world point lands on screen in CSS pixels, or null when it is behind the camera or off
+    // screen. The HUD pins name tags and the objective marker with it; the result is reused.
+    project(x, y, z) {
+      tmpV.set(x, y, z).project(camera);
+      if (tmpV.z > 1 || Math.abs(tmpV.x) > 0.96 || Math.abs(tmpV.y) > 0.9) return null;
+      screen.x = Math.round((tmpV.x * 0.5 + 0.5) * window.innerWidth);
+      screen.y = Math.round((0.5 - tmpV.y * 0.5) * window.innerHeight);
+      return screen;
+    },
     // World-space point near the subject's muzzle, for tracers.
     muzzleWorld(out) {
       tmpV.set(0.16, -0.12, -0.7).applyQuaternion(camera.quaternion).add(camera.position);
@@ -142,8 +151,8 @@ export function createView(container, map) {
       const shakeX = (Math.random() - 0.5) * vmState.shake, shakeY = (Math.random() - 0.5) * vmState.shake;
       camera.position.set(ex, ey, ez);
       camera.rotation.set(subject.pitch + subject.punchPitch * 0.9 + shakeY, subject.yaw + subject.punchYaw * 0.9 + shakeX, 0);
-      const w = subject.current === 'primary' ? subject.primary : subject.current === 'secondary' ? subject.secondary : null;
-      const wantFov = subject.scoped && w ? WEAPONS[w.def.id].zoomFov ?? BASE_FOV : BASE_FOV;
+      const w = heldWeapon(subject);
+      const wantFov = subject.scoped && w ? w.def.zoomFov ?? BASE_FOV : BASE_FOV;
       fov = lerp(fov, wantFov, Math.min(1, dt * 18));
       if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
 

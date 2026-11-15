@@ -8,7 +8,7 @@
 //   Every site has three ways in, each lane has cover that breaks its long sightline, and the two
 //   long lanes (Long Gallery, Culverts) trade distance for safety against the short ones.
 
-import { CELL } from './config.js';
+export const CELL = 2; // metres per map cell: Kilnworks is 40 x 33 cells, 80 m by 66 m
 
 export const COLS = 40;
 export const ROWS = 33;
@@ -56,8 +56,9 @@ const PROPS = [
   [KIND.step, 35, 5, 0.45], [KIND.step, 35, 6, 0.45], [KIND.step, 35, 7, 0.45],
   [KIND.tall, 33, 8], [KIND.tall, 33, 9], [KIND.crate, 30, 10], [KIND.crate, 31, 6], [KIND.crate, 37, 10],
   [KIND.pillar, 29, 7],
-  // Courtyard: a tall stack breaks the Mid Door to South Arch sightline.
-  [KIND.tall, 19, 17], [KIND.tall, 20, 17], [KIND.pots, 16, 15], [KIND.crate, 23, 19], [KIND.crate, 15, 20],
+  // Courtyard: a container wall four cells wide stands between the Mid Door and the South Arch, so
+  // neither spawn can see the other and mid has to be crossed around one end of it.
+  [KIND.tall, 18, 17], [KIND.tall, 19, 17], [KIND.tall, 20, 17], [KIND.tall, 21, 17], [KIND.pots, 16, 15], [KIND.crate, 23, 19], [KIND.crate, 15, 20],
   [KIND.barrier, 22, 14], [KIND.barrier, 23, 14],
   // Lanes.
   [KIND.pots, 3, 17], [KIND.tall, 1, 21],
@@ -80,6 +81,7 @@ export const SPAWNS = {
 };
 
 export const PLANT_SPOTS = { A: [[4, 9], [7, 9]], B: [[32, 10], [35, 8]] };
+export const SITES = { A: { x: 12, z: 18 }, B: { x: 68, z: 18 } }; // world centres of the two plant zones
 
 // Defender holds: stand on `cell`, watch `watch`.
 export const HOLDS = [

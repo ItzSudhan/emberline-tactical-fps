@@ -5,10 +5,9 @@
 // silos above them show over every roof.
 
 import * as THREE from 'three';
-import { CELL } from './config.js';
-import { KIND, ZONE, COLS, ROWS } from './mapdata.js';
+import { CELL, KIND, ZONE, COLS, ROWS } from './map-kilnworks.js';
+import { heightAt } from './movement-collision.js';
 import { makeTextures, siteDecal, signTexture, softDot } from './textures.js';
-import { heightAt } from './physics.js';
 
 const FLOOR_STYLE = {
   'Kiln Hall': 'tiles', 'Silo Court': 'tiles', 'Watch Yard': 'tiles',
@@ -21,6 +20,7 @@ const SIGNS = [
   [15, 13, 'n', '◀ A  SHORT'], [24, 13, 'n', 'SHORT B ▶'], [6, 12, 's', 'KILN HALL · A'], [32, 12, 's', 'SILO COURT · B'],
   [19, 31, 's', 'ASH GATE'], [20, 1, 'n', 'WATCH YARD'], [1, 25, 'w', 'LONG GALLERY'], [37, 25, 'e', 'CULVERTS · B'], [19, 5, 'w', 'MID'],
 ];
+const LETTERS = [[1, 7, 'w', 'A'], [8, 12, 's', 'A'], [38, 10, 'e', 'B'], [30, 12, 's', 'B']]; // stencilled on each site's walls
 const LAMPS = [[33, 12, 's', 0x8fe4ff], [38, 9, 'e', 0x8fe4ff], [20, 1, 'n', 0x8fe4ff], [19, 31, 's', 0xffb46b], [14, 18, 'w', 0xffb46b]];
 const KILNS = [[1, 9, 'w'], [1, 11, 'w'], [4, 5, 'n']];
 const STACKS = [[15, 8, 26], [8, 19, 22], [25, 9, 30]]; // cellX, cellZ, height
@@ -161,6 +161,9 @@ export function buildWorld(scene, map) {
   addDecals(scene, map);
   for (const [cx, cz, side, text] of SIGNS) {
     scene.add(mount(new THREE.Mesh(new THREE.PlaneGeometry(3.2, 0.8), new THREE.MeshStandardMaterial({ map: signTexture(text, '#1f4f4b', '#f1e3c6'), roughness: 0.8 })), cx, cz, side, 2.6));
+  }
+  for (const [cx, cz, side, letter] of LETTERS) {
+    scene.add(mount(new THREE.Mesh(new THREE.PlaneGeometry(2.8, 2.8), new THREE.MeshStandardMaterial({ map: siteDecal(letter, '#f4e6c8'), transparent: true, roughness: 0.9 })), cx, cz, side, 2.2, 0.08));
   }
   const animated = addLandmarks(scene, tex);
   const sun = addLights(scene);
