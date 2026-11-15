@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Emberline: Kilnworks, a round-based tactical shooter</title>
+<link rel="icon" href="./favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="./style.min.css">
+</head>
+<body>
+<div id="game"></div>
+
+<div id="hud" class="hidden">
+  <div id="topbar">
+    <div class="team att"><div><div class="tname">VANGUARD</div><div class="pips" id="pips-att"></div></div><b id="score-att">0</b></div>
+    <div id="clock"><span id="round-label">ROUND 1</span><b id="timer">1:45</b><span id="phase-label">BUY</span></div>
+    <div class="team def"><div><div class="tname" style="text-align:right">BASTION</div><div class="pips" id="pips-def"></div></div><b id="score-def">0</b></div>
+  </div>
+  <div id="minimap-wrap"><canvas id="minimap" width="200" height="165"></canvas><div id="location"></div></div>
+  <div id="feed"></div>
+  <div id="radio"></div>
+  <div id="crosshair"><i></i><i></i><i></i><i></i><i class="dot"></i></div>
+  <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+  <div id="hurt"></div>
+  <div id="center-msg"></div>
+  <div id="progress" class="hidden"><div id="progress-label"></div><div class="bar"><i id="progress-fill"></i></div></div>
+  <div id="vitals">
+    <div class="stat" id="hp"><small>HEALTH</small><b id="hp-val">100</b><div class="bar"><i id="hp-bar"></i></div></div>
+    <div class="stat" id="armor"><small>ARMOUR</small><b id="armor-val">0</b><div class="bar"><i id="armor-bar"></i></div></div>
+    <div class="stat" id="money"><small>FUNDS</small><b id="money-val">$800</b></div>
+  </div>
+  <div id="carry" class="hidden">CARRYING THE IGNITER · HOLD E ON A SITE</div>
+  <div id="weapon"><small id="weapon-name">Pike-9</small><div id="ammo">12 <span>/ 48</span></div><div id="slots"></div></div>
+  <div id="scope" class="hidden"></div>
+  <div id="flash"></div>
+  <div id="vignette"></div>
+  <div id="spectate" class="hidden"></div>
+</div>
+
+<div id="banner" class="hidden"><b id="banner-title"></b><span id="banner-sub"></span></div>
+
+<div id="board" class="panel hidden"><table><thead><tr><th>PLAYER</th><th>K</th><th>D</th><th>FUNDS</th><th>WEAPON</th></tr></thead><tbody id="board-body"></tbody></table></div>
+
+<div id="buy" class="overlay hidden">
+  <section class="panel">
+    <h2>Requisition</h2>
+    <p id="buy-sub">Click or press the key. B or Esc closes.</p>
+    <div id="buy-grid"></div>
+    <div id="buy-msg"></div>
+  </section>
+</div>
+
+<div id="menu" class="overlay">
+  <section class="panel">
+    <h1>EMBER<em>LINE</em></h1>
+    <p class="sub">Kilnworks, an abandoned ceramics plant in the red desert. Five against five, first to seven rounds.
+      <b class="c-att">Vanguard</b> must plant the Igniter at Kiln Hall (A) or Silo Court (B).
+      <b class="c-def">Bastion</b> holds both sites and defuses it. Buy between rounds, and stop moving before you shoot.</p>
+    <div class="row"><span>SIDE</span><button data-side="att" class="on">Vanguard (attack)</button><button data-side="def">Bastion (defend)</button></div>
+    <div class="row"><span>BOTS</span><button data-diff="easy">Recruit</button><button data-diff="normal" class="on">Regular</button><button data-diff="hard">Veteran</button></div>
+    <button id="play" class="go" type="button">Deploy</button>
+    <div class="keys">
+      <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move</div>
+      <div><kbd>Mouse</kbd> aim · <kbd>Click</kbd> fire</div>
+      <div><kbd>Shift</kbd> walk quietly</div>
+      <div><kbd>Ctrl</kbd>/<kbd>C</kbd> crouch · <kbd>Space</kbd> jump</div>
+      <div><kbd>R</kbd> reload · <kbd>Right</kbd> scope</div>
+      <div><kbd>1</kbd><kbd>2</kbd><kbd>4</kbd> weapons · <kbd>G</kbd> grenade</div>
+      <div><kbd>B</kbd> buy menu · <kbd>Tab</kbd> scores</div>
+      <div><kbd>E</kbd> hold to plant / defuse</div>
+    </div>
+  </section>
+</div>
+
+<div id="pause" class="overlay hidden"><section class="panel" style="text-align:center"><h2 style="margin:0 0 8px">Paused</h2><p style="color:var(--muted);margin:0 0 14px">The round keeps running. Click to return to the fight.</p><button id="resume" class="go" type="button">Resume</button></section></div>
+
+<div id="over" class="overlay hidden"><section class="panel"><h2 id="over-title">Victory</h2><p id="over-sub"></p><button id="again" class="go" type="button">Play again</button></section></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.min.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
