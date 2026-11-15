@@ -50,7 +50,7 @@ export function createState({ seed = 1, side = 'att', difficulty = 'normal', aut
       defuser: null,
       beep: 0,
     },
-    plan: { site: 'A', executeAt: 25, executing: false, smokesThrown: 0 },
+    plan: { site: 'A', executeAt: 25, executing: false }, // the attackers' shared plan for this round
     intel: { att: { x: 0, z: 0, time: -99, room: '' }, def: { x: 0, z: 0, time: -99, room: '' } },
     grenades,
     smokes,

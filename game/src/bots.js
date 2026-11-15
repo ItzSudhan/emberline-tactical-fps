@@ -3,7 +3,7 @@
 // recoil rules. Perception runs ten times a second: a field of view, line of sight that smoke and
 // walls block, and hearing of gunfire and running feet. Between those, it steers along A* paths.
 
-import { BOT_SKILL, WEAPONS } from './config.js';
+import { BOT_SKILL, WEAPONS, ROUND } from './config.js';
 import { findPath, cellX, cellZ, isWalkable } from './nav.js';
 import { clearLine, smokeBlocks } from './physics.js';
 import { eyeHeight, bodyHeight, heldWeapon, switchTo, weaponInstance } from './actors.js';
@@ -28,13 +28,15 @@ export function createBrain(skillName) {
     aimErrYaw: 0, aimErrPitch: 0, jitterYaw: 0, jitterPitch: 0,
     lastX: 0, lastZ: 0, lastTime: -99,
     heardX: 0, heardZ: 0, heardTime: -99,
+    watchX: NaN, watchZ: NaN, // the angle to hold when nothing is in sight
     noiseCursor: 0,
     thinkPhase: 0,
     role: 'hold', hold: null, route: null, waypoint: 0, post: 0,
-    phaseT: 0, shooting: false, strafeDir: 1, crouchPref: false,
+    phaseT: 0, shooting: false, strafeDir: 1, crouchPref: false, lookDown: false,
     cover: false, coverX: 0, coverZ: 0, coverUntil: 0,
     hurtBy: null,
     smokeDone: false,
+    flashDone: false,
     nadeCooldown: 0,
     stuckT: 0, stuckX: 0, stuckZ: 0,
     sweep: 0,
@@ -50,7 +52,6 @@ export function planRound(state) {
   plan.site = rng.chance(0.5) ? 'A' : 'B';
   plan.executeAt = 16 + rng.range(0, 14);
   plan.executing = false;
-  plan.smokesThrown = 0;
   const routes = ROUTES[plan.site];
   let ri = rng.int(2);
   const holds = HOLDS.slice();
@@ -61,7 +62,7 @@ export function planRound(state) {
     const b = a.brain;
     if (!b) continue;
     b.target = null; b.lastTime = -99; b.heardTime = -99; b.hasGoal = false; b.pathLen = 0;
-    b.cover = false; b.hurtBy = null; b.smokeDone = false; b.nadeCooldown = 3 + rng.next() * 4;
+    b.cover = false; b.hurtBy = null; b.smokeDone = b.flashDone = false; b.nadeCooldown = 3 + rng.next() * 4;
     b.noiseCursor = state.noiseCount;
     b.thinkPhase = rng.int(6);
     b.crouchPref = rng.chance(0.35);
@@ -80,7 +81,7 @@ export function planRound(state) {
 // Bots spend money like a team: full buys when they can afford rifles, saves when they cannot.
 export function botBuy(state, a, teamAvg) {
   const rng = state.rng;
-  const pistolRound = state.match.round === 1;
+  const pistolRound = state.match.round === 1 || state.match.round === ROUND.half + 1;
   const eco = !pistolRound && teamAvg < 2300 && !a.primary;
   const buy = (cost) => { if (a.money >= cost) { a.money -= cost; return true; } return false; };
   if (pistolRound) {
@@ -284,6 +285,7 @@ function objective(state, a, b, dt) {
   b.nadeCooldown -= dt;
   const bomb = state.bomb;
   b.watchX = NaN; b.watchZ = NaN; // followRoute may set these when the squad reaches the site
+  b.lookDown = false; // set while kneeling over the Igniter
   let watchX = NaN, watchZ = NaN;
 
   // Recently saw someone: hunt toward it (attackers and roamers), or hold the angle (anchors).
@@ -314,10 +316,12 @@ function objective(state, a, b, dt) {
       const d = Math.hypot(a.pos.x - bomb.x, a.pos.z - bomb.z);
       if (defuser === a) {
         setGoal(b, bomb.x, bomb.z);
-        if (d < 1.1) { inp.use = true; inp.crouch = true; b.hasGoal = false; }
+        if (d < 1.1) { inp.use = true; inp.crouch = true; b.hasGoal = false; b.lookDown = true; watchX = bomb.x; watchZ = bomb.z; }
       } else {
         setGoal(b, bomb.x + Math.sin(b.post * 2.1) * 4, bomb.z + Math.cos(b.post * 2.1) * 4);
         watchX = bomb.x; watchZ = bomb.z;
+        // Retake: flash the site from outside before going in.
+        if (!b.flashDone && a.flash > 0 && d > 8 && d < 22) { lob(state, a, 'flash', bomb.x, bomb.z); b.flashDone = true; }
       }
     } else if (recentSight && b.post % 2 === 0) {
       setGoal(b, b.lastX, b.lastZ);
@@ -373,10 +377,16 @@ function followRoute(state, a, b) {
   let wp = Math.min(b.waypoint, limit);
   const tx = cellCenter(pts[wp][0]), tz = cellCenter(pts[wp][1]);
   if (Math.hypot(a.pos.x - tx, a.pos.z - tz) < 1.6 && wp < limit) { b.waypoint = ++wp; }
-  // Smoke the site's crossfire on the way in.
-  if (plan.executing && !b.smokeDone && a.smoke > 0 && wp >= stage && route.smoke) {
-    lob(state, a, 'smoke', cellCenter(route.smoke[0]), cellCenter(route.smoke[1]));
-    b.smokeDone = true;
+  // On the execute: smoke the site's crossfire from the staging point, then flash the site itself.
+  if (plan.executing && wp >= stage) {
+    const site = pts[pts.length - 1];
+    if (!b.smokeDone && a.smoke > 0) {
+      lob(state, a, 'smoke', cellCenter(route.smoke[0]), cellCenter(route.smoke[1]));
+      b.smokeDone = true;
+    } else if (!b.flashDone && a.flash > 0 && Math.hypot(a.pos.x - cellCenter(site[0]), a.pos.z - cellCenter(site[1])) < 20) {
+      lob(state, a, 'flash', cellCenter(site[0]), cellCenter(site[1]));
+      b.flashDone = true;
+    }
   }
   if (wp === pts.length - 1 && Math.hypot(a.pos.x - tx, a.pos.z - tz) < 3) {
     // On site: spread to post-plant cover and guard the carrier.
@@ -441,7 +451,6 @@ function lob(state, a, type, x, z) {
   const h = Math.cos(ang) * speed, v = Math.sin(ang) * speed;
   a.yaw = yawTo(x - sx, z - sz);
   throwGrenade(state, a, type, ((x - sx) / d) * h, v, ((z - sz) / d) * h);
-  if (type === 'smoke') state.plan.smokesThrown++;
 }
 
 function setGoal(b, x, z) {
@@ -496,9 +505,9 @@ function steer(state, a, b, dt) {
   // Look where it matters: the target, a watched angle, a noise, or simply ahead.
   if (b.target && b.target.alive && state.time - b.targetSeen < 0.4) return;
   let lookYaw = a.yaw;
-  if (!Number.isNaN(b.watchX) && b.watchX !== undefined) lookYaw = yawTo(b.watchX - a.pos.x, b.watchZ - a.pos.z) + Math.sin(b.sweep * 0.9) * 0.25;
+  if (!Number.isNaN(b.watchX)) lookYaw = yawTo(b.watchX - a.pos.x, b.watchZ - a.pos.z) + Math.sin(b.sweep * 0.9) * 0.25;
   else if (mx || mz) lookYaw = yawTo(mx, mz);
-  turnToward(a, lookYaw, 0, 5, dt);
+  turnToward(a, lookYaw, b.lookDown ? -0.85 : 0, 5, dt);
 }
 
 function openWalk(state, a, cell) {

@@ -2,7 +2,7 @@
 // Also the Igniter (the objective charge): carrying, dropping, planting, the fuse and defusing,
 // and the money each round pays out.
 
-import { ROUND, ECON, WEAPONS, GEAR, BOT_NAMES } from './config.js';
+import { ROUND, ECON, WEAPONS, GEAR, BOT_NAMES, SIDES } from './config.js';
 import { createActor, resetForRound, applyDamage, weaponInstance } from './actors.js';
 import { createBrain, planRound, botBuy } from './bots.js';
 import { SPAWNS, ZONE, zoneAt } from './mapdata.js';
@@ -32,6 +32,21 @@ export function setupMatch(state) {
   startRound(state);
 }
 
+// Half time: the squads trade sides and start again from pistols, keeping their scores.
+function swapSides(state) {
+  const m = state.match;
+  for (const a of state.actors) {
+    a.team = a.team === 'att' ? 'def' : 'att';
+    a.alive = false; // resetForRound strips a dead actor's kit
+    a.money = ECON.start;
+  }
+  const s = m.score.att;
+  m.score.att = m.score.def;
+  m.score.def = s;
+  m.lossStreak.att = m.lossStreak.def = 0;
+  state.settings.side = state.player.team;
+}
+
 export function startRound(state) {
   const m = state.match;
   m.round++;
@@ -39,6 +54,8 @@ export function startRound(state) {
   m.phaseTime = ROUND.freeze;
   m.roundClock = 0;
   m.result = null;
+  const swap = m.round === ROUND.half + 1;
+  if (swap) swapSides(state);
   const idx = { att: 0, def: 0 };
   for (const a of state.actors) resetForRound(state, a, SPAWNS[a.team][idx[a.team]++ % SPAWNS[a.team].length]);
   for (const g of state.grenades) g.active = false;
@@ -61,7 +78,7 @@ export function startRound(state) {
     for (const a of mates) if (a.brain && (!a.isPlayer || state.settings.autoplay)) botBuy(state, a, avg);
   }
   planRound(state);
-  emit(state, 'roundStart').a = m.round;
+  emit(state, 'roundStart').text = swap ? 'swap' : '';
 }
 
 export function canBuy(state, a) {
@@ -84,7 +101,7 @@ export function buyItem(state, a, id) {
     if (owned && owned.def.id === id) return 'Already owned';
   } else if (id === 'vest' && a.armor >= 100) return 'Already owned';
   else if (id === 'helm' && a.helmet && a.armor >= 100) return 'Already owned';
-  else if (id === 'kit' && (a.team !== 'def' || a.kit)) return a.kit ? 'Already owned' : 'Bastion only';
+  else if (id === 'kit' && (a.team !== 'def' || a.kit)) return a.kit ? 'Already owned' : `${SIDES.def.name} only`;
   else if ((id === 'frag' || id === 'smoke') && a[id] >= 1) return 'Carrying the maximum';
   else if (id === 'flash' && a.flash >= 2) return 'Carrying the maximum';
   if (a.money < price) return 'Not enough money';
@@ -123,9 +140,9 @@ export function updateRound(state, dt) {
   let att = 0, def = 0;
   for (const a of state.actors) if (a.alive) { if (a.team === 'att') att++; else def++; }
   const planted = state.bomb.state === 'planted';
-  if (def === 0) endRound(state, 'att', 'Bastion eliminated');
-  else if (att === 0 && !planted) endRound(state, 'def', 'Vanguard eliminated');
-  else if (!planted && m.phaseTime <= 0) endRound(state, 'def', 'Time ran out');
+  if (def === 0) endRound(state, 'att', `${SIDES.def.name} eliminated`, false);
+  else if (att === 0 && !planted) endRound(state, 'def', `${SIDES.att.name} eliminated`, false);
+  else if (!planted && m.phaseTime <= 0) endRound(state, 'def', 'Time ran out', false);
 }
 
 function updateBomb(state, dt) {
@@ -194,7 +211,7 @@ function updateBomb(state, dt) {
       defuser.using = 0;
       bomb.state = 'defused';
       emit(state, 'defused', bomb.x, bomb.y, bomb.z).actor = defuser;
-      endRound(state, 'def', `${defuser.name === 'You' ? 'You' : defuser.name} defused the Igniter`);
+      endRound(state, 'def', `${defuser.name} defused the Igniter`, true);
       return;
     }
   } else {
@@ -209,27 +226,30 @@ function updateBomb(state, dt) {
       const d = Math.hypot(a.pos.x - bomb.x, a.pos.z - bomb.z);
       if (d < 22) applyDamage(state, a, null, 500 * (1 - d / 22) ** 1.5, 'body', 1, 'Igniter');
     }
-    endRound(state, 'att', 'The Igniter detonated');
+    endRound(state, 'att', 'The Igniter detonated', true);
   }
 }
 
-export function endRound(state, winner, reason) {
+// Scores the round and pays both sides: winners a flat bonus (more for an objective win), losers a
+// bonus that grows with every round lost in a row, so a beaten side can afford to buy back in.
+function endRound(state, winner, reason, byObjective) {
   const m = state.match;
   if (m.phase !== 'live') return;
   m.phase = 'post';
   m.phaseTime = ROUND.endDelay;
   m.score[winner]++;
-  m.result = { winner, reason };
   m.history.push(winner);
   const loser = winner === 'att' ? 'def' : 'att';
-  const winPay = reason.includes('Igniter') ? ECON.winBomb : ECON.win;
+  const winPay = byObjective ? ECON.winBomb : ECON.win;
   const lossPay = Math.min(ECON.lossMax, ECON.loss + ECON.lossStep * m.lossStreak[loser]);
   m.lossStreak[loser]++;
   m.lossStreak[winner] = 0;
+  let mvp = null;
   for (const a of state.actors) {
     a.money = Math.min(ECON.max, a.money + (a.team === winner ? winPay : lossPay));
     a.using = 0;
+    if (a.team === winner && (!mvp || a.roundKills > mvp.roundKills)) mvp = a;
   }
-  const e = emit(state, 'roundEnd');
-  e.text = winner;
+  m.result = { winner, reason, mvp, winPay, lossPay };
+  emit(state, 'roundEnd');
 }

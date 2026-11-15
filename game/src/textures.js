@@ -44,8 +44,15 @@ function plaster(base, stain) {
     g.fillStyle = rng.next() < 0.5 ? 'rgba(255,255,255,0.08)' : 'rgba(60,40,25,0.1)';
     g.fillRect(rng.next() * 256, rng.next() * 256, 1.5, 1.5);
   }
-  speckle(g, 256, 256, 40, [stain], 6, 26);
-  // Rain streaks down from the top edge and a soiled band at the foot.
+  // Damp patches: soft-edged stains rather than dots, so a wall reads as weathered at any distance.
+  for (let i = 0; i < 9; i++) {
+    const x = rng.next() * 256, y = rng.next() * 256, r = rng.range(30, 80);
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, stain); grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.globalAlpha = rng.range(0.08, 0.2); g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  g.globalAlpha = 1;
+  // Rain streaks down from the top edge.
   for (let i = 0; i < 14; i++) {
     const x = rng.next() * 256, len = rng.range(30, 140);
     const grad = g.createLinearGradient(0, 0, 0, len);
@@ -116,18 +123,64 @@ function crate() {
   return toTexture(c);
 }
 
-function container() {
+// Corrugated sheet steel with rust: shipping containers carry a stencil, shed walls do not.
+function corrugated(base, edge, label) {
   const [c, g] = canvas(256);
-  g.fillStyle = '#2f7f7a'; g.fillRect(0, 0, 256, 256);
+  g.fillStyle = base; g.fillRect(0, 0, 256, 256);
   for (let x = 0; x < 256; x += 16) {
     g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(x, 0, 5, 256);
     g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(x + 7, 0, 3, 256);
   }
-  speckle(g, 256, 256, 260, ['#8a4a22', '#b3622c', '#1d4f4c'], 2, 12);
-  g.fillStyle = '#1d3f3d'; g.fillRect(0, 0, 256, 14); g.fillRect(0, 242, 256, 14);
-  g.fillStyle = 'rgba(240,230,210,0.75)'; g.font = 'bold 30px monospace'; g.textAlign = 'center';
-  g.fillText('EMBER CO', 128, 120);
+  // Rust runs down the ribs in streaks, with a scatter of small chips.
+  for (let i = 0; i < 26; i++) {
+    const x = rng.next() * 256, y = rng.next() * 200, len = rng.range(20, 110);
+    const grad = g.createLinearGradient(0, y, 0, y + len);
+    grad.addColorStop(0, 'rgba(150,78,34,0.55)'); grad.addColorStop(1, 'rgba(150,78,34,0)');
+    g.fillStyle = grad; g.fillRect(x, y, rng.range(2, 6), len);
+  }
+  speckle(g, 256, 256, 90, ['#8a4a22', edge], 1, 3);
+  g.fillStyle = edge; g.fillRect(0, 0, 256, 14); g.fillRect(0, 242, 256, 14);
+  if (label) {
+    g.fillStyle = 'rgba(240,230,210,0.75)'; g.font = 'bold 30px monospace'; g.textAlign = 'center';
+    g.fillText(label, 128, 120);
+  }
   return toTexture(c);
+}
+
+// A six-pane factory window. Dark ones reflect the sky; lit ones are the same texture drawn far
+// brighter than white, so the bloom pass makes them glow.
+function windowPanes() {
+  const [c, g] = canvas(128);
+  g.fillStyle = '#3a2a20'; g.fillRect(0, 0, 128, 128);
+  for (let y = 0; y < 3; y++) for (let x = 0; x < 2; x++) {
+    const grad = g.createLinearGradient(0, y * 40, 0, y * 40 + 40);
+    grad.addColorStop(0, '#c9d6dc'); grad.addColorStop(1, '#7f95a3');
+    g.fillStyle = grad; g.fillRect(8 + x * 58, 8 + y * 39, 54, 34);
+  }
+  speckle(g, 128, 128, 60, ['#1a120c'], 1, 5);
+  return toTexture(c);
+}
+
+function door() {
+  const [c, g] = canvas(64, 128);
+  g.fillStyle = '#2b211b'; g.fillRect(0, 0, 64, 128);
+  g.fillStyle = '#285e5a'; g.fillRect(5, 5, 54, 123);
+  g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 2;
+  g.strokeRect(11, 12, 42, 46); g.strokeRect(11, 68, 42, 50);
+  g.fillStyle = '#d8c8a8'; g.fillRect(47, 62, 6, 3);
+  speckle(g, 64, 128, 90, ['#8a4a22', '#10201f'], 1, 5);
+  return toTexture(c);
+}
+
+// The firing mouth of a kiln: an arch of white-hot to red glow on a transparent ground.
+function kilnMouth() {
+  const [c, g] = canvas(128);
+  g.beginPath(); g.moveTo(14, 128); g.lineTo(14, 62); g.arc(64, 62, 50, Math.PI, 0); g.lineTo(114, 128); g.closePath();
+  const grad = g.createRadialGradient(64, 104, 4, 64, 84, 78);
+  grad.addColorStop(0, '#fff3c4'); grad.addColorStop(0.45, '#ff9a3c'); grad.addColorStop(1, '#7a1c0a');
+  g.fillStyle = grad; g.fill();
+  g.lineWidth = 9; g.strokeStyle = '#1c0f0a'; g.stroke();
+  return toTexture(c, false);
 }
 
 function brick() {
@@ -196,9 +249,13 @@ export function makeTextures() {
     tiles: tiles('#b8643c', '#c97a4f', '#5a3424'),
     concrete: concrete(),
     crate: crate(),
-    container: container(),
+    container: corrugated('#2f7f7a', '#1d3f3d', 'EMBER CO'),
+    steel: corrugated('#8f9a97', '#4f5a58', ''),
     brick: brick(),
     roof: roof(),
     hazard: hazard(),
+    window: windowPanes(),
+    door: door(),
+    kilnMouth: kilnMouth(),
   };
 }

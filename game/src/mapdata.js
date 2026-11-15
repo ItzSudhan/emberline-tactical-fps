@@ -1,22 +1,24 @@
 // Kilnworks: an abandoned desert ceramics plant. The map is a 40 x 33 grid of 2 m cells carved out of
 // solid buildings. Rooms are named so the HUD and the bots' radio calls can say where things happen.
 //
-//   Bastion Yard (defender spawn) top-centre, Vanguard Gate (attacker spawn) bottom-centre.
-//   Site A: Kiln Hall (north-west), reached by Long Gallery, Short A or Upper Walk A.
-//   Site B: Silo Court (north-east), reached by the Culverts, Short B or Upper Walk B.
+//   Watch Yard (defender spawn) top-centre, Ash Gate (attacker spawn) bottom-centre.
+//   Site A: Kiln Hall (north-west, brick and firelight), reached by Long Gallery, Short A or Upper Walk A.
+//   Site B: Silo Court (north-east, sheet steel and cold lamps), reached by the Culverts, Short B or Upper Walk B.
 //   The Courtyard in the middle links both short routes and the Mid Door to the defenders.
+//   Every site has three ways in, each lane has cover that breaks its long sightline, and the two
+//   long lanes (Long Gallery, Culverts) trade distance for safety against the short ones.
 
 import { CELL } from './config.js';
 
 export const COLS = 40;
 export const ROWS = 33;
 
-export const KIND = { floor: 0, wall: 1, crate: 2, tall: 3, pillar: 4, step: 5, barrier: 6 };
-export const ZONE = { none: 0, siteA: 1, siteB: 2, attSpawn: 3, defSpawn: 4 };
+export const KIND = { floor: 0, wall: 1, crate: 2, tall: 3, pillar: 4, step: 5, barrier: 6, pots: 7 };
+export const ZONE = { none: 0, siteA: 1, siteB: 2 };
 
 // [name, x0, z0, x1, z1] inclusive cell rectangles that become open floor.
 const ROOMS = [
-  ['Bastion Yard', 16, 1, 23, 4],
+  ['Watch Yard', 16, 1, 23, 4],
   ['Upper Walk A', 6, 2, 15, 4],
   ['Upper Walk B', 24, 2, 33, 4],
   ['Kiln Hall', 1, 5, 11, 12],
@@ -30,23 +32,22 @@ const ROOMS = [
   ['South Arch', 18, 22, 21, 23],
   ['Clay Pits', 1, 24, 14, 26],
   ['Drain Run', 25, 24, 37, 26],
-  ['Vanguard Gate', 15, 24, 24, 31],
+  ['Ash Gate', 15, 24, 24, 31],
 ];
 
 const ZONES = [
   [ZONE.siteA, 3, 7, 8, 10],
   [ZONE.siteB, 31, 7, 36, 10],
-  [ZONE.attSpawn, 16, 28, 23, 31],
-  [ZONE.defSpawn, 17, 1, 22, 3],
 ];
 
-// [kind, x, z, height?] solid props inside rooms. Low crates (1.1 m) hide a crouched body and can be
-// jumped onto; tall crates hide a standing one.
+// [kind, x, z, height?] solid props inside rooms. Low cover (crates and pallets of fired pots, 1.1 m)
+// hides a crouched body, can be jumped onto and can be shot through at a cost; containers hide a
+// standing body and stop bullets.
 const PROPS = [
-  // Kiln Hall (A): a raised balcony in the corner, a crate stack mid-site, scattered low cover.
+  // Kiln Hall (A): a raised balcony in the corner, a container stack mid-site, scattered low cover.
   [KIND.step, 1, 5, 0.9], [KIND.step, 2, 5, 0.9], [KIND.step, 1, 6, 0.9], [KIND.step, 2, 6, 0.9],
   [KIND.step, 3, 5, 0.45], [KIND.step, 3, 6, 0.45],
-  [KIND.tall, 5, 8], [KIND.tall, 6, 8], [KIND.crate, 9, 7], [KIND.crate, 8, 11], [KIND.crate, 4, 11],
+  [KIND.tall, 5, 8], [KIND.tall, 6, 8], [KIND.pots, 9, 7], [KIND.crate, 8, 11], [KIND.pots, 4, 11],
   [KIND.pillar, 10, 6],
   // Silo Court (B): a loading dock on the east wall, a crate column, a pillar.
   [KIND.step, 36, 5, 0.9], [KIND.step, 37, 5, 0.9], [KIND.step, 38, 5, 0.9],
@@ -56,24 +57,26 @@ const PROPS = [
   [KIND.tall, 33, 8], [KIND.tall, 33, 9], [KIND.crate, 30, 10], [KIND.crate, 31, 6], [KIND.crate, 37, 10],
   [KIND.pillar, 29, 7],
   // Courtyard: a tall stack breaks the Mid Door to South Arch sightline.
-  [KIND.tall, 19, 17], [KIND.tall, 20, 17], [KIND.crate, 16, 15], [KIND.crate, 23, 19], [KIND.crate, 15, 20],
+  [KIND.tall, 19, 17], [KIND.tall, 20, 17], [KIND.pots, 16, 15], [KIND.crate, 23, 19], [KIND.crate, 15, 20],
   [KIND.barrier, 22, 14], [KIND.barrier, 23, 14],
   // Lanes.
-  [KIND.crate, 3, 17], [KIND.tall, 1, 21],
-  [KIND.crate, 8, 25], [KIND.tall, 11, 24],
+  [KIND.pots, 3, 17], [KIND.tall, 1, 21],
+  [KIND.pots, 8, 25], [KIND.tall, 11, 24],
   [KIND.crate, 16, 26], [KIND.crate, 23, 26],
   [KIND.tall, 29, 26], [KIND.crate, 32, 24],
   [KIND.crate, 35, 16], [KIND.tall, 37, 19],
   [KIND.crate, 16, 4], [KIND.crate, 23, 4],
-  [KIND.crate, 12, 3], [KIND.crate, 27, 3],
-  [KIND.crate, 13, 15], [KIND.crate, 26, 15],
+  [KIND.pots, 12, 3], [KIND.crate, 27, 3],
+  [KIND.pots, 13, 15], [KIND.crate, 26, 15],
 ];
 
-const PROP_HEIGHT = { [KIND.crate]: 1.1, [KIND.tall]: 2.3, [KIND.pillar]: 7, [KIND.barrier]: 1.05 };
+const PROP_HEIGHT = { [KIND.crate]: 1.1, [KIND.pots]: 1.1, [KIND.tall]: 2.3, [KIND.pillar]: 7, [KIND.barrier]: 1.05 };
+const isSoft = (kind) => kind === KIND.crate || kind === KIND.pots || kind === KIND.barrier;
 
+// The player takes the first cell of a side, at the back, so the squad stands in view at the buy.
 export const SPAWNS = {
-  att: [[17, 29], [19, 30], [21, 29], [18, 31], [22, 31]],
-  def: [[18, 1], [20, 2], [21, 1], [19, 3], [22, 3]],
+  att: [[19, 31], [17, 29], [21, 29], [18, 30], [22, 30]],
+  def: [[20, 1], [18, 3], [21, 3], [19, 2], [22, 2]],
 };
 
 export const PLANT_SPOTS = { A: [[4, 9], [7, 9]], B: [[32, 10], [35, 8]] };
@@ -146,6 +149,8 @@ export function buildMap() {
     map.kind[i] = kind;
     map.h[i] = height ?? PROP_HEIGHT[kind];
   }
+  // The same grid with soft cover flattened: what a bullet still hits after it punches through wood.
+  map.hard = { cols: COLS, rows: ROWS, h: map.h.map((h, i) => (isSoft(map.kind[i]) ? 0 : h)) };
   return map;
 }
 

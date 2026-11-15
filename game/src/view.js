@@ -6,6 +6,7 @@ import { BODY, WEAPONS } from './config.js';
 import { buildWorld } from './mapview.js';
 import { createFx } from './fx.js';
 import { createSoldier, updateSoldier, createViewmodel, createIgniterModel } from './models.js';
+import { createPost } from './post.js';
 import { eyeHeight } from './actors.js';
 import { softDot } from './textures.js';
 import { lerp } from './util.js';
@@ -13,16 +14,18 @@ import { lerp } from './util.js';
 const BASE_FOV = 78;
 
 export function createView(container, map) {
-  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance', preserveDrawingBuffer: true });
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 1.0;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.autoClear = false;
   container.appendChild(renderer.domElement);
+  const post = createPost(renderer);
+  post.resize();
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(BASE_FOV, window.innerWidth / window.innerHeight, 0.05, 1500);
@@ -54,7 +57,6 @@ export function createView(container, map) {
   const tmpQ = new THREE.Quaternion();
   const tmpV = new THREE.Vector3();
   let fov = BASE_FOV;
-  let menuAngle = null;
 
   function bindActors(state) {
     for (const v of soldiers.values()) scene.remove(v.root);
@@ -85,20 +87,20 @@ export function createView(container, map) {
     fx,
     bindActors,
     get fov() { return fov; },
-    setMenuAngle(a) { menuAngle = a; },
     resize() {
       camera.aspect = vmCamera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       vmCamera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
+      post.resize();
     },
     kick(strength) { vmState.kick = Math.min(1.6, vmState.kick + strength); vmState.flash = 0.045; },
     shake(amount) { vmState.shake = Math.max(vmState.shake, amount); },
     sway(dx, dy) { vmState.swayX += dx; vmState.swayY += dy; },
     // World-space point near the subject's muzzle, for tracers.
     muzzleWorld(out) {
-      tmpV.set(0.16, -0.12, -0.7).applyQuaternion(camera.quaternion);
-      return out.copy(camera.position).add(tmpV);
+      tmpV.set(0.16, -0.12, -0.7).applyQuaternion(camera.quaternion).add(camera.position);
+      out.x = tmpV.x; out.y = tmpV.y; out.z = tmpV.z;
     },
 
     render(state, alpha, dt, subject, menu) {
@@ -113,18 +115,17 @@ export function createView(container, map) {
       igniter.group.visible = bomb.state === 'dropped' || bomb.state === 'planted';
       igniter.group.position.set(bomb.x, bomb.y, bomb.z);
       igniter.light.visible = bomb.state !== 'planted' || bomb.beep > Math.max(0.12, Math.min(1, bomb.timer / 30)) - 0.08;
-      for (let i = 0; i < world.blinkers.length; i++) world.blinkers[i].visible = Math.sin(time * 2.4 + i) > 0;
+      world.update(menu ? performance.now() / 1000 : time);
       fx.update(dt, state);
 
       if (menu) {
-        const t = menuAngle ?? performance.now() * 0.00004;
-        // Orbit offset to the right of centre so the map sits beside the menu panel.
+        // A slow orbit, offset to the right of centre so the map sits beside the menu panel.
+        const t = performance.now() * 0.00004 + 2.2;
         camera.position.set(28 + Math.cos(t) * 50, 52, 33 + Math.sin(t) * 42);
         camera.lookAt(28, 0, 33);
         camera.fov = 55;
         camera.updateProjectionMatrix();
-        renderer.clear();
-        renderer.render(scene, camera);
+        post.render(scene, camera, t);
         return;
       }
 
@@ -146,8 +147,7 @@ export function createView(container, map) {
       fov = lerp(fov, wantFov, Math.min(1, dt * 18));
       if (Math.abs(camera.fov - fov) > 0.01) { camera.fov = fov; camera.updateProjectionMatrix(); }
 
-      renderer.clear();
-      renderer.render(scene, camera);
+      post.render(scene, camera, time);
       if (!subject.alive || subject.scoped) return;
 
       // Weapon: bob, sway against mouse motion, recoil kick, reload dip, draw from below.

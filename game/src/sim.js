@@ -1,11 +1,12 @@
 // One fixed simulation tick (SIM_DT). Rendering never calls into here; it interpolates between the
-// last two ticks using each actor's prev/pos.
+// last two ticks using each actor's prev/pos. Nothing below this file imports three.js or touches
+// the DOM, so tools/soak.mjs plays whole matches in plain Node to balance the bots.
 
-import { updateBot } from './bots.js';
 import { stepActor, separateActors } from './actors.js';
 import { updateWeapon } from './weapons.js';
 import { updateGrenades } from './grenades.js';
 import { updateRound } from './round.js';
+import { updateBot } from './bots.js';
 
 export function stepSim(state, dt) {
   const phase = state.match.phase;

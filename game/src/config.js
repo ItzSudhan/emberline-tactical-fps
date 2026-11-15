@@ -32,6 +32,7 @@ export const ROUND = {
   kitDefuseTime: 3.6,
   endDelay: 5.5,
   toWin: 7,
+  half: 6, // the squads swap sides after this many rounds
   teamSize: 5,
 };
 
@@ -47,12 +48,15 @@ export const ECON = {
   plant: 300,
 };
 
+// The Stokers come to light the plant's kilns one last time; the Kilnwatch keep them cold.
 export const SIDES = {
-  att: { name: 'Vanguard', short: 'VGD', color: 0xd4652f, css: '#e07a43', verb: 'plant the Igniter' },
-  def: { name: 'Bastion', short: 'BST', color: 0x2b9e95, css: '#3cc0b4', verb: 'hold both sites' },
+  att: { name: 'Stokers', color: 0xd4652f, css: '#e07a43', verb: 'plant the Igniter' },
+  def: { name: 'Kilnwatch', color: 0x2b9e95, css: '#3cc0b4', verb: 'hold both sites' },
 };
 
 // Spread and recoil are radians. moveSpread is added in full at run speed, scaled down as you slow.
+// `pen` is the share of damage that gets past armour; from 0.55 up a round also punches through
+// soft cover (crates, pot pallets, barriers) and keeps three quarters of that share.
 export const WEAPONS = {
   pike: {
     id: 'pike', name: 'Pike-9', slot: 'secondary', kind: 'pistol', price: 0,
@@ -74,7 +78,7 @@ export const WEAPONS = {
   },
   brush: {
     id: 'brush', name: 'Brushcutter', slot: 'primary', kind: 'shotgun', price: 1100,
-    dmg: 17, rpm: 72, auto: false, mag: 6, reserve: 32, reload: 2.7, falloff: 0.45, pen: 0.6, headMult: 2.5,
+    dmg: 17, rpm: 72, auto: false, mag: 6, reserve: 32, reload: 2.7, falloff: 0.45, pen: 0.5, headMult: 2.5,
     spread: 0.06, moveSpread: 0.015, airSpread: 0.1, kick: 0.08, kickYaw: 0.01, sprayGrow: 0, recover: 6,
     speed: 0.92, pellets: 9, sound: 'shotgun', reward: 900,
   },
@@ -93,12 +97,12 @@ export const WEAPONS = {
 };
 
 export const GEAR = {
-  vest: { name: 'Kevlar Vest', price: 650 },
-  helm: { name: 'Vest + Helm', price: 1000 },
-  kit: { name: 'Defuse Kit', price: 400 },
-  frag: { name: 'Shard Grenade', price: 300, fuse: 1.6, radius: 7, damage: 98 },
-  smoke: { name: 'Veil Smoke', price: 300, fuse: 1.4, radius: 4.4, life: 16 },
-  flash: { name: 'Glare Flash', price: 200, fuse: 1.3, radius: 22 },
+  vest: { name: 'Plate Vest', price: 650, note: '100 armour · soaks body hits' },
+  helm: { name: 'Vest + Helm', price: 1000, note: 'armour that also covers the head' },
+  kit: { name: 'Defuse Kit', price: 400, note: 'defuse in 3.6 s, not 7' },
+  frag: { name: 'Shard Grenade', price: 300, fuse: 1.6, radius: 7, damage: 98, note: '98 damage at the centre' },
+  smoke: { name: 'Veil Smoke', price: 300, fuse: 1.4, radius: 4.4, life: 16, note: 'blocks sight for 16 s' },
+  flash: { name: 'Glare Flash', price: 200, fuse: 1.3, radius: 22, note: 'blinds whoever faces it' },
 };
 
 // Buy menu layout: key, item id, category.
@@ -117,8 +121,8 @@ export const SHOP = [
 ];
 
 export const BOT_NAMES = {
-  att: ['Rook', 'Tansy', 'Ferro', 'Quill', 'Moth', 'Cinder'],
-  def: ['Basalt', 'Juniper', 'Halyard', 'Sable', 'Wick', 'Larch'],
+  att: ['Rook', 'Tansy', 'Ferro', 'Quill', 'Moth'],
+  def: ['Basalt', 'Juniper', 'Halyard', 'Sable', 'Wick'],
 };
 
 // Bot skill: reaction delay (s), aim settle rate, residual aim error (rad), counter-strafe discipline.

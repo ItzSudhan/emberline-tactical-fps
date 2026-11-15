@@ -1,22 +1,21 @@
 // Emberline boot and frame loop. The simulation advances in fixed SIM_DT ticks from an accumulator;
-// rendering interpolates between ticks. Systems talk to each other through state and its event ring.
+// rendering interpolates between the last two ticks. Systems never call each other: the simulation
+// mutates `state`, and the view, HUD and audio read it and drain its event ring once a frame.
 
 import { SIM_DT, SIDES, SHOP } from './config.js';
-import { createInput } from './input.js';
-import { createControls } from './controls.js';
 import { createState, eventAt, EVENT_CAPACITY } from './state.js';
-import { setupMatch, buyItem } from './round.js';
 import { stepSim } from './sim.js';
-import { createView } from './view.js';
-import { createHud } from './hud.js';
-import { createAudio } from './audio.js';
+import { setupMatch, buyItem } from './round.js';
 import { eyeHeight } from './actors.js';
 import { clearLine } from './physics.js';
 import { zoneAt, ZONE } from './mapdata.js';
-import { runShot } from './shots.js';
+import { createHud } from './hud.js';
+import { createView } from './view.js';
+import { createInput } from './input.js';
+import { createControls } from './controls.js';
+import { createAudio } from './audio.js';
 
 const params = new URLSearchParams(location.search);
-const shotName = params.get('shot');
 const $ = (id) => document.getElementById(id);
 
 const menuState = createState({ seed: 3 });
@@ -33,31 +32,32 @@ const app = {
   difficulty: 'normal',
   acc: 0,
   last: performance.now(),
-  cursor: 0,
+  cursor: 0, // how far into the event ring this frame loop has read
   buyOpen: false,
   paused: false,
   spectate: null,
   spotT: 0,
   radioSeen: 0,
-  frozen: false, // screenshot scenes stop the clock once staged
-  frozenFrames: 0,
-  postStage: null,
+  // Demo mode only (see the end of this file): a clock multiplier, a stopped clock, and an observer
+  // that may stop it.
+  speed: 1,
+  hold: false,
+  pauseWhen: null,
 };
-const muzzle = { x: 0, y: 0, z: 0, copy(v) { this.x = v.x; this.y = v.y; this.z = v.z; return this; }, add(v) { this.x += v.x; this.y += v.y; this.z += v.z; return this; } };
+const muzzle = { x: 0, y: 0, z: 0 };
 
 // ---------- menu ----------
-for (const b of document.querySelectorAll('[data-side]')) {
-  b.addEventListener('click', () => {
-    app.side = b.dataset.side;
-    for (const o of document.querySelectorAll('[data-side]')) o.classList.toggle('on', o === b);
-  });
+function choice(attr, key) {
+  const buttons = document.querySelectorAll(`[data-${attr}]`);
+  for (const b of buttons) {
+    b.addEventListener('click', () => {
+      app[key] = b.dataset[attr];
+      for (const o of buttons) o.classList.toggle('on', o === b);
+    });
+  }
 }
-for (const b of document.querySelectorAll('[data-diff]')) {
-  b.addEventListener('click', () => {
-    app.difficulty = b.dataset.diff;
-    for (const o of document.querySelectorAll('[data-diff]')) o.classList.toggle('on', o === b);
-  });
-}
+choice('side', 'side');
+choice('diff', 'difficulty');
 $('play').addEventListener('click', () => startMatch());
 $('again').addEventListener('click', () => startMatch());
 $('resume').addEventListener('click', () => { audio.init(); input.lock(); });
@@ -67,13 +67,13 @@ view.renderer.domElement.addEventListener('click', () => {
 });
 for (const b of hud.buyButtons) b.addEventListener('click', () => tryBuy(b.dataset.id));
 
-export function startMatch(opts = {}) {
-  if (!opts.noLock) audio.init(); // browsers only allow audio after a click
+function startMatch(opts = {}) {
+  if (!opts.demo) audio.init(); // browsers only allow audio after a click
   const state = createState({
     seed: opts.seed ?? (Date.now() % 100000),
     side: opts.side ?? app.side,
     difficulty: opts.difficulty ?? app.difficulty,
-    autoplay: !!opts.autoplay,
+    autoplay: !!opts.demo,
   });
   setupMatch(state);
   app.state = state;
@@ -86,8 +86,7 @@ export function startMatch(opts = {}) {
   $('menu').classList.add('hidden');
   $('over').classList.add('hidden');
   hud.showHud(true);
-  if (!opts.noLock) input.lock();
-  return state;
+  if (!opts.demo) input.lock();
 }
 
 function tryBuy(id) {
@@ -103,39 +102,43 @@ function setBuy(open) {
 }
 
 document.addEventListener('pointerlockchange', () => {
-  app.paused = app.mode === 'play' && !input.locked && !app.buyOpen && app.state.match.phase !== 'over' && !app.frozen;
+  app.paused = app.mode === 'play' && !input.locked && !app.buyOpen && !app.state.settings.autoplay && app.state.match.phase !== 'over';
   $('pause').classList.toggle('hidden', !app.paused);
 });
 window.addEventListener('resize', () => view.resize());
 
 // ---------- per frame ----------
 function handleKeys(state) {
-  const p = state.player;
-  for (const code of input.takePresses()) {
-    if (app.mode !== 'play') continue;
-    if (code === 'KeyB' && state.match.phase !== 'over') { setBuy(!app.buyOpen); continue; }
-    if (app.buyOpen) {
-      if (code === 'Escape') { setBuy(false); continue; }
+  const presses = input.presses;
+  for (let i = 0; i < presses.length; i++) {
+    const code = presses[i];
+    if (code === 'KeyB' && state.match.phase !== 'over') setBuy(!app.buyOpen);
+    else if (!app.buyOpen) controls.press(state.player, code);
+    else if (code === 'Escape') setBuy(false);
+    else {
       const item = SHOP.find((s) => `Digit${s.key}` === code || (s.key === '-' && code === 'Minus'));
       if (item) tryBuy(item.id);
-      continue;
     }
-    controls.press(p, code);
   }
+  presses.length = 0;
 }
 
+// Whose eyes the camera uses: the player, or a living teammate once the player is down.
 function subjectOf(state) {
   const p = state.player;
   if (p.alive) { app.spectate = null; return p; }
-  if (!app.spectate || !app.spectate.alive) app.spectate = state.actors.find((a) => a.alive && a.team === p.team) ?? p;
+  if (!app.spectate || !app.spectate.alive) app.spectate = nextMate(state, null) ?? p;
   return app.spectate;
 }
 
-function cycleSpectate(state) {
-  const mates = state.actors.filter((a) => a.alive && a.team === state.player.team);
-  if (!mates.length) return;
-  const i = mates.indexOf(app.spectate);
-  app.spectate = mates[(i + 1) % mates.length];
+function nextMate(state, after) {
+  const actors = state.actors, n = actors.length;
+  const from = after ? actors.indexOf(after) : -1;
+  for (let k = 1; k <= n; k++) {
+    const a = actors[(from + k) % n];
+    if (a.alive && a.team === state.player.team && a !== state.player) return a;
+  }
+  return null;
 }
 
 // The player's own eyes mark enemies on the minimap, five times a second.
@@ -155,6 +158,7 @@ function spotEnemies(state, dt) {
   }
 }
 
+// Turns this frame's simulation events into effects, sounds and banners.
 function consumeEvents(state, subject) {
   const p = state.player;
   if (state.eventCount - app.cursor > EVENT_CAPACITY) app.cursor = state.eventCount - EVENT_CAPACITY;
@@ -171,10 +175,10 @@ function consumeEvents(state, subject) {
         if (mine) { view.muzzleWorld(muzzle); view.fx.tracer(muzzle.x, muzzle.y, muzzle.z, e.a, e.b, e.c); view.fx.muzzle(muzzle.x, muzzle.y, muzzle.z); }
         else view.fx.tracer(e.x - Math.sin(e.actor.yaw) * 0.6, e.y - 0.25, e.z - Math.cos(e.actor.yaw) * 0.6, e.a, e.b, e.c);
         break;
-      case 'impact': view.fx.impact(e.x, e.y, e.z, e.a, e.b, e.c); break;
+      case 'impact': view.fx.impact(e.x, e.y, e.z, e.a, e.b, e.c, e.text === 'wood'); break;
       case 'blood': view.fx.blood(e.x, e.y, e.z, e.a, e.b, e.c, e.text === 'head'); break;
       case 'hit':
-        if (e.actor === p) { hud.flashHit(e.text === 'head'); audio.hitmark(e.text === 'head'); }
+        if (e.actor === p) { hud.flashHit(e.text === 'head', e.a); audio.hitmark(e.text === 'head'); }
         if (e.other === subject) { audio.hurt(); view.shake(0.03); }
         break;
       case 'death':
@@ -182,24 +186,27 @@ function consumeEvents(state, subject) {
         break;
       case 'step': case 'land': audio.step(e.x, e.z, mine); break;
       case 'reload': audio.click(e.x, e.z, 0.8); break;
-      case 'reloaded': audio.click(e.x, e.z, 1.2); break;
+      case 'reloaded': case 'pickup': audio.click(e.x, e.z, 1.2); break;
       case 'dry': audio.dry(e.x, e.z); break;
       case 'scope': if (mine) audio.scope(); break;
-      case 'bounce': audio.bounce(e.x, e.z); break;
+      case 'throw': case 'bounce': audio.bounce(e.x, e.z); break;
       case 'explode': view.fx.blast(e.x, e.y, e.z, false); audio.explosion(e.x, e.z); view.shake(0.02); break;
       case 'smoke': audio.smoke(e.x, e.z); break;
       case 'flash': view.fx.flash(e.x, e.y, e.z); audio.flashbang(e.x, e.z, subject.flashed); break;
       case 'beep': audio.beep(e.x, e.z); break;
-      case 'planted': audio.planted(); hud.banner('Igniter planted', `Site ${state.bomb.site} · 40 seconds`, SIDES.att.css); break;
+      case 'planted': audio.planted(); hud.banner('Igniter planted', `Site ${state.bomb.site} · 40 seconds on the fuse`, SIDES.att.css); break;
       case 'defused': audio.planted(); break;
       case 'igniterBlast': view.fx.blast(e.x, e.y, e.z, true); audio.explosion(e.x, e.z); view.shake(0.08); break;
       case 'roundEnd': {
         const r = state.match.result;
         audio.stinger(r.winner === p.team);
-        hud.banner(`${SIDES[r.winner].name} take the round`, r.reason, SIDES[r.winner].css);
+        hud.banner(`${SIDES[r.winner].name} take the round`, `${r.reason} · MVP ${r.mvp.name}, ${r.mvp.roundKills} kills`, SIDES[r.winner].css);
         break;
       }
-      case 'roundStart': view.fx.clear(); break;
+      case 'roundStart':
+        view.fx.clear();
+        if (e.text === 'swap') { view.bindActors(state); hud.banner('Half time', `Sides swap: you now ${SIDES[p.team].verb}`, SIDES[p.team].css); }
+        break;
       case 'matchOver': showOver(state); break;
       default: break;
     }
@@ -216,18 +223,15 @@ function showOver(state) {
   const won = m.score[p.team] > m.score[p.team === 'att' ? 'def' : 'att'];
   $('over-title').textContent = won ? 'Victory' : 'Defeat';
   $('over-title').style.color = won ? SIDES[p.team].css : '#ff5a3c';
-  $('over-sub').textContent = `${SIDES.att.name} ${m.score.att} : ${m.score.def} ${SIDES.def.name} · you went ${p.kills} kills, ${p.deaths} deaths`;
+  $('over-sub').textContent = `${SIDES.att.name} ${m.score.att} : ${m.score.def} ${SIDES.def.name} · you went ${p.kills} kills, ${p.assists} assists, ${p.deaths} deaths`;
   $('over').classList.remove('hidden');
   input.unlock();
 }
 
 function frame(now) {
-  // A frozen (screenshot) scene renders with zero elapsed time so effects hold still.
-  const dt = app.frozen ? 0 : Math.min(0.1, (now - app.last) / 1000);
+  const dt = app.hold ? 0 : Math.min(0.1, (now - app.last) / 1000);
   app.last = now;
   const state = app.state;
-  if (app.frozen && ++app.frozenFrames === 2 && app.postStage) app.postStage();
-  if (app.frozen && app.frozenFrames > 4) window.__shotReady = true;
   if (app.mode === 'menu') {
     view.render(state, 1, dt, state.player, true);
     requestAnimationFrame(frame);
@@ -240,18 +244,19 @@ function frame(now) {
     controls.look(p, view.fov / 78);
   } else if (input.locked && input.mouse.left) {
     input.mouse.left = false;
-    cycleSpectate(state);
+    app.spectate = nextMate(state, app.spectate) ?? app.spectate;
   } else input.takeMouse();
 
-  if (!app.paused && !app.frozen) {
-    app.acc += dt;
-    while (app.acc >= SIM_DT) {
+  if (!app.paused && !app.hold) {
+    app.acc += dt * app.speed;
+    while (app.acc >= SIM_DT && !app.hold) {
       controls.fill(p, input.locked && !app.buyOpen && p.alive);
       stepSim(state, SIM_DT);
       app.acc -= SIM_DT;
+      if (app.pauseWhen && app.pauseWhen(state)) app.hold = true;
     }
   }
-  const alpha = app.frozen ? 1 : app.acc / SIM_DT;
+  const alpha = app.hold ? 1 : app.acc / SIM_DT;
   const subject = subjectOf(state);
   spotEnemies(state, dt);
   consumeEvents(state, subject);
@@ -264,10 +269,12 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-// ?demo: watch a bot-only match from the player's seat (the player slot is driven by a bot brain).
-if (params.has('demo')) startMatch({ autoplay: true, noLock: true, seed: Number(params.get('seed') ?? 5) });
-if (shotName) {
-  // Screenshot mode: stage a scene from shots.js, render it, then signal the capture script.
-  runShot(shotName, { app, startMatch, view, hud, stepSim, setBuy: (open) => { app.buyOpen = open; hud.setBuyOpen(open); } });
+// ?demo plays a bot-only match seen through the player's eyes: a bot brain fills the player's input
+// record, and everything else is the ordinary game. tools/shots.mjs took the screenshots this way; it
+// watches the match through `window.emberline` and stops the clock on a moment worth keeping, so no
+// scene is staged.
+if (params.has('demo')) {
+  startMatch({ demo: true, seed: Number(params.get('seed') ?? 5), side: params.get('side') ?? 'att', difficulty: params.get('bots') ?? 'normal' });
+  window.emberline = { app, view, hud, setBuy };
 }
 requestAnimationFrame(frame);

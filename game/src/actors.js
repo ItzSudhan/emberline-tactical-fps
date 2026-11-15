@@ -1,7 +1,7 @@
 // Soldiers: the player and every bot are the same kind of actor driven by the same `input` record,
 // so bots obey the same acceleration, crouch, spread and collision rules the player does.
 
-import { BODY, WEAPONS, ECON, SIDES } from './config.js';
+import { BODY, WEAPONS, ECON } from './config.js';
 import { moveBody } from './physics.js';
 import { emit, makeNoise, pushLine } from './state.js';
 import { cellCenter } from './mapdata.js';
@@ -51,7 +51,12 @@ export function createActor(team, name, isPlayer = false) {
     hurtZ: 0,
     kills: 0,
     deaths: 0,
+    assists: 0,
+    headKills: 0,
+    damage: 0, // total dealt to the other side, for the scoreboard
     roundKills: 0,
+    hitBy: null, // the last two enemies to hurt this actor: the killer and whoever earns the assist
+    hitBy2: null,
     stride: 0,
     using: 0, // seconds spent holding plant / defuse
     diedAt: -99,
@@ -192,10 +197,18 @@ export function applyDamage(state, victim, attacker, amount, zone, pen, weaponNa
     victim.armor = Math.max(0, victim.armor - (dmg - toHp) * 0.5);
     dmg = toHp;
   }
-  dmg = Math.max(1, Math.round(dmg));
+  dmg = Math.min(victim.hp, Math.max(1, Math.round(dmg)));
   victim.hp -= dmg;
   victim.hurtTime = state.time;
-  if (attacker) { victim.hurtX = attacker.pos.x; victim.hurtZ = attacker.pos.z; }
+  // Being hit drags you down: a tagged runner cannot simply sprint out of a fight.
+  victim.vel.x *= 0.6; victim.vel.z *= 0.6;
+  if (attacker) {
+    victim.hurtX = attacker.pos.x; victim.hurtZ = attacker.pos.z;
+    if (attacker.team !== victim.team) {
+      attacker.damage += dmg;
+      if (victim.hitBy !== attacker) { victim.hitBy2 = victim.hitBy; victim.hitBy = attacker; }
+    }
+  }
   const e = emit(state, 'hit', victim.pos.x, victim.pos.y + (zone === 'head' ? 1.6 : 1.1), victim.pos.z);
   e.a = dmg; e.actor = attacker; e.other = victim; e.text = zone;
   if (victim.brain && attacker) victim.brain.hurtBy = attacker;
@@ -220,12 +233,16 @@ export function killActor(state, victim, attacker, weaponName, headshot) {
     if (attacker.team !== victim.team) {
       attacker.kills++;
       attacker.roundKills++;
+      if (headshot) attacker.headKills++;
       const reward = WEAPONS[weaponName]?.reward ?? ECON.kill;
       attacker.money = Math.min(ECON.max, attacker.money + reward);
+      const helper = victim.hitBy === attacker ? victim.hitBy2 : victim.hitBy;
+      if (helper) helper.assists++;
     } else {
       attacker.money = Math.max(0, attacker.money - 300);
     }
   }
+  victim.hitBy = victim.hitBy2 = null;
   const bomb = state.bomb;
   if (bomb.carrier === victim) {
     bomb.carrier = null;
@@ -277,8 +294,7 @@ export function resetForRound(state, a, cell) {
   a.scoped = false;
   a.flashed = 0;
   a.roundKills = 0;
+  a.hitBy = a.hitBy2 = null;
   a.using = 0;
   a.hurtTime = -9;
 }
-
-export const teamName = (team) => SIDES[team].name;

@@ -98,7 +98,9 @@ function detonate(state, g) {
       if (d > GEAR.flash.radius || !clearLine(state.map, ex, ey, ez, g.x, g.y + 0.1, g.z)) continue;
       dirFromAngles(a.yaw, a.pitch, look);
       const facing = (look.x * dx + look.y * dy + look.z * dz) / (d || 1);
-      const amount = Math.max(0, (facing + 0.35) / 1.35) * (1 - d / GEAR.flash.radius);
+      // The thrower's own squad hears the call and half turns away.
+      const warned = owner && a.team === owner.team ? 0.4 : 1;
+      const amount = Math.max(0, (facing + 0.35) / 1.35) * (1 - d / GEAR.flash.radius) * warned;
       a.flashed = Math.max(a.flashed, amount * 4.2);
     }
     emit(state, 'flash', g.x, g.y, g.z).actor = owner;

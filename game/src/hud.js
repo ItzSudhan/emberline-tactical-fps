@@ -1,34 +1,42 @@
-// The HUD reads state once a frame and writes the DOM only where a value changed.
+// The HUD reads state and writes the DOM only where a value changed. Numbers that move every frame
+// (crosshair gap, hit marker, progress bar) are compared before any string is built; the text
+// panels are rebuilt ten times a second.
 
-import { SIDES, SHOP, WEAPONS, GEAR, ROUND, CELL } from './config.js';
+import { SIDES, SHOP, WEAPONS, GEAR, ROUND, ECON, CELL } from './config.js';
 import { KIND, ZONE, COLS, ROWS, roomNameAt } from './mapdata.js';
 import { heldWeapon } from './actors.js';
 import { spreadOf } from './weapons.js';
 import { canBuy, priceOf } from './round.js';
 import { fmtTime } from './util.js';
 
-const $ = (id) => document.getElementById(id);
 const PX = 5; // minimap pixels per cell
+const IDS = ['hud', 'score-att', 'score-def', 'pips-att', 'pips-def', 'team-att', 'team-def', 'history', 'clock', 'timer', 'round-label',
+  'phase-label', 'minimap', 'location', 'feed', 'radio', 'crosshair', 'hitmarker', 'dmg', 'hurt', 'center-msg', 'progress', 'progress-label',
+  'progress-fill', 'hp', 'hp-val', 'hp-bar', 'armor-val', 'armor-bar', 'money-val', 'carry', 'weapon-name', 'ammo', 'slots', 'scope', 'flash',
+  'vignette', 'spectate', 'banner', 'banner-title', 'banner-sub', 'board', 'board-head', 'board-body', 'buy', 'buy-funds', 'buy-grid',
+  'buy-squad', 'buy-msg', 'buy-sub'];
+const pct = (v) => `${Math.round(Math.max(0.04, Math.min(1, v)) * 100)}%`;
+const carried = (a) => (a.primary ? a.primary.def.name : a.secondary.def.name);
+
+// What the buy menu says under an item: the numbers and four bars for a gun, one line for gear.
+function describe(id) {
+  const w = WEAPONS[id];
+  if (!w) return `<i>${GEAR[id].note}</i>`;
+  const bar = (label, v) => `<span class="bar">${label}<b style="width:${pct(v)}"></b></span>`;
+  return `<i>${w.dmg}${w.pellets > 1 ? `×${w.pellets}` : ''} dmg · ${w.rpm} rpm · ${w.mag}/${w.reserve}</i>`
+    + `<span class="bars">${bar('DMG', (w.dmg * w.pellets) / 130)}${bar('RATE', w.rpm / 850)}${bar('AIM', 1 - w.spread / 0.06)}${bar('MOVE', (w.speed - 0.7) / 0.3)}</span>`;
+}
 
 export function createHud() {
   const el = {};
-  for (const id of ['hud', 'score-att', 'score-def', 'pips-att', 'pips-def', 'clock', 'timer', 'round-label', 'phase-label', 'minimap', 'location',
-    'feed', 'radio', 'crosshair', 'hitmarker', 'hurt', 'center-msg', 'progress', 'progress-label', 'progress-fill', 'hp', 'hp-val', 'hp-bar',
-    'armor-val', 'armor-bar', 'money-val', 'carry', 'weapon-name', 'ammo', 'slots', 'scope', 'flash', 'vignette', 'spectate', 'banner',
-    'banner-title', 'banner-sub', 'board', 'board-body', 'buy', 'buy-grid', 'buy-msg', 'buy-sub']) el[id] = $(id);
+  for (const id of IDS) el[id] = document.getElementById(id);
   const ticks = el.crosshair.children;
+  const teams = [['att', el['pips-att'], el['team-att']], ['def', el['pips-def'], el['team-def']]];
   const cache = new Map();
-  const set = (node, key, value, prop = 'textContent') => {
-    if (cache.get(key) === value) return;
-    cache.set(key, value);
-    node[prop] = value;
-  };
-  const style = (node, key, prop, value) => {
-    const k = key + prop;
-    if (cache.get(k) === value) return;
-    cache.set(k, value);
-    node.style[prop] = value;
-  };
+  // Each writer skips the DOM when the value is the one it wrote last.
+  const text = (node, key, value, prop = 'textContent') => { if (cache.get(key) !== value) { cache.set(key, value); node[prop] = value; } };
+  const num = (node, key, prop, value, unit = '') => { if (cache.get(key) !== value) { cache.set(key, value); node.style[prop] = value + unit; } };
+  const flag = (node, key, cls, on) => { if (cache.get(key) !== on) { cache.set(key, on); node.classList.toggle(cls, on); } };
 
   // Static minimap layer, painted once.
   const base = document.createElement('canvas');
@@ -39,7 +47,7 @@ export function createHud() {
     const g = base.getContext('2d');
     for (let z = 0; z < ROWS; z++) for (let x = 0; x < COLS; x++) {
       const i = z * COLS + x, k = map.kind[i], zone = map.zone[i];
-      g.fillStyle = k === KIND.wall ? '#2b211b' : k === KIND.pillar ? '#4a2c22' : k === KIND.crate || k === KIND.barrier ? '#7d6650'
+      g.fillStyle = k === KIND.wall ? '#2b211b' : k === KIND.pillar ? '#4a2c22' : k === KIND.crate || k === KIND.pots || k === KIND.barrier ? '#7d6650'
         : k === KIND.tall ? '#2f6d69' : zone === ZONE.siteA || zone === ZONE.siteB ? '#b3784e' : k === KIND.step ? '#a58b72' : '#8a6c53';
       g.fillRect(x * PX, z * PX, PX, PX);
     }
@@ -53,165 +61,139 @@ export function createHud() {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.id = item.id;
-    const name = WEAPONS[item.id]?.name ?? GEAR[item.id].name;
-    b.innerHTML = `<small>${item.key} · ${item.cat}</small><b>${name}</b><span class="price"></span>`;
+    b.innerHTML = `<small>${item.key} · ${item.cat}</small><b>${WEAPONS[item.id]?.name ?? GEAR[item.id].name}</b>${describe(item.id)}<span class="price"></span>`;
     el['buy-grid'].appendChild(b);
     return b;
   });
+  const prices = buyButtons.map((b) => b.querySelector('.price'));
 
-  let hitT = 0, hitHead = false, bannerT = 0;
+  let hitT = 0, hitHead = false, dmgT = 0, bannerT = 0, frames = 0, buyOpen = false, boardOpen = false;
 
-  return {
-    buyButtons,
-    showHud(on) { el.hud.classList.toggle('hidden', !on); },
-    flashHit(head) { hitT = 0.18; hitHead = head; },
-    buyMessage(text) { el['buy-msg'].textContent = text; },
-    setBuyOpen(open) { el.buy.classList.toggle('hidden', !open); if (open) el['buy-msg'].textContent = ''; },
-    showBoard(on) { el.board.classList.toggle('hidden', !on); },
-    banner(title, sub, color) {
-      el['banner-title'].textContent = title;
-      el['banner-title'].style.color = color;
-      el['banner-sub'].textContent = sub;
-      el.banner.classList.remove('hidden');
-      bannerT = 3.5;
-    },
+  // Every frame: only numbers and class flags.
+  function fast(state, dt, view, subject) {
+    const w = heldWeapon(subject);
+    // The crosshair gap is the weapon's spread cone projected on screen: it opens when you run or
+    // spray and closes when you stop, so the HUD shows exactly where the next round can go.
+    const gap = Math.min(80, Math.round(4 + ((w ? spreadOf(subject) : 0.02) / Math.tan((view.fov * Math.PI) / 360)) * (window.innerHeight / 2)));
+    num(ticks[0], 'c0', 'top', -gap - 8, 'px');
+    num(ticks[1], 'c1', 'top', gap, 'px');
+    num(ticks[2], 'c2', 'left', -gap - 8, 'px');
+    num(ticks[3], 'c3', 'left', gap, 'px');
+    flag(el.scope, 'sc', 'hidden', !subject.scoped);
+    flag(el.crosshair, 'ch', 'hidden', subject.scoped || (!!w && w.def.kind === 'sniper'));
+    hitT -= dt; dmgT -= dt; bannerT -= dt;
+    num(el.hitmarker, 'hm', 'opacity', hitT > 0 ? 1 : 0);
+    flag(el.hitmarker, 'hh', 'head', hitHead);
+    num(el.dmg, 'dm', 'opacity', dmgT > 0 ? 1 : 0);
+    flag(el.banner, 'bn', 'hidden', bannerT <= 0);
+    // Damage direction: an arc that points toward whoever hit you.
+    const since = state.time - subject.hurtTime;
+    if (since < 1.2) {
+      const rel = subject.yaw + Math.PI - Math.atan2(subject.hurtX - subject.pos.x, subject.hurtZ - subject.pos.z);
+      num(el.hurt, 'hr', 'rotate', Math.round(rel * 20) / 20, 'rad');
+    }
+    num(el.hurt, 'ho', 'opacity', since < 1.2 ? Math.round((1 - since / 1.2) * 10) / 10 : 0);
+    num(el.flash, 'fl', 'opacity', Math.round(Math.min(1, subject.flashed / 1.4) * 20) / 20);
+    num(el.vignette, 'vg', 'opacity', subject.alive ? Math.round(Math.max(0, (40 - subject.hp) / 40) * 10) / 10 : 0);
+    const bomb = state.bomb, using = subject.using > 0;
+    flag(el.progress, 'pg', 'hidden', !using);
+    if (using) num(el['progress-fill'], 'pf', 'width', Math.round(Math.min(1, bomb.state === 'planted' ? bomb.defuseProgress : bomb.plantProgress) * 200) / 2, '%');
+  }
 
-    update(state, dt, view) {
-      const p = state.player, m = state.match, bomb = state.bomb;
-      const subject = view.subject;
-      if (!baseDrawn) drawBase(state.map);
+  // Ten times a second: everything that is text.
+  function panels(state, view, subject) {
+    const p = state.player, m = state.match, bomb = state.bomb;
+    const planted = bomb.state === 'planted';
 
-      // Score, round clock and the alive pips.
-      set(el['score-att'], 'sa', String(m.score.att));
-      set(el['score-def'], 'sd', String(m.score.def));
-      set(el['round-label'], 'rl', `ROUND ${m.round}`);
-      const planted = bomb.state === 'planted';
-      el.clock.classList.toggle('planted', planted);
-      const label = m.phase === 'freeze' ? 'BUY PHASE' : planted ? 'IGNITER LIVE' : m.phase === 'post' ? 'ROUND OVER' : m.phase === 'over' ? 'MATCH OVER' : `FIRST TO ${ROUND.toWin}`;
-      set(el['phase-label'], 'pl', label);
-      set(el.timer, 'tm', fmtTime(m.phase === 'live' ? m.phaseTime : m.phase === 'freeze' ? m.phaseTime : 0));
-      for (const team of ['att', 'def']) {
-        let html = '';
-        for (const a of state.actors) if (a.team === team) html += a.alive ? '<i></i>' : '<i class="dead"></i>';
-        set(el[`pips-${team}`], 'pip' + team, html, 'innerHTML');
+    // Score, round clock, who is alive and how the rounds have gone.
+    text(el['score-att'], 'sa', m.score.att);
+    text(el['score-def'], 'sd', m.score.def);
+    text(el['round-label'], 'rl', `ROUND ${m.round} · ${m.round > ROUND.half ? '2ND' : '1ST'} HALF`);
+    flag(el.clock, 'cp', 'planted', planted);
+    text(el['phase-label'], 'pl', m.phase === 'freeze' ? 'BUY PHASE' : planted ? 'IGNITER LIVE' : m.phase === 'post' ? 'ROUND OVER' : m.phase === 'over' ? 'MATCH OVER' : `FIRST TO ${ROUND.toWin}`);
+    text(el.timer, 'tm', fmtTime(m.phase === 'live' || m.phase === 'freeze' ? m.phaseTime : 0));
+    for (const [team, pips, panel] of teams) {
+      let html = '';
+      for (const a of state.actors) if (a.team === team) html += a.alive ? '<i></i>' : '<i class="dead"></i>';
+      text(pips, team, html, 'innerHTML');
+      flag(panel, team + 'm', 'mine', team === p.team);
+    }
+    let history = '';
+    for (const winner of m.history) history += `<i class="${winner}"></i>`;
+    text(el.history, 'hi', history, 'innerHTML');
+
+    // Vitals and weapon of whoever the camera follows.
+    text(el['hp-val'], 'hp', Math.max(0, Math.ceil(subject.hp)));
+    num(el['hp-bar'], 'hb', 'width', Math.max(0, subject.hp), '%');
+    flag(el.hp, 'hl', 'low', subject.hp <= 25);
+    text(el['armor-val'], 'ar', Math.ceil(subject.armor) + (subject.helmet ? '+H' : ''));
+    num(el['armor-bar'], 'ab', 'width', Math.ceil(subject.armor), '%');
+    text(el['money-val'], 'mo', `$${subject.money}`);
+    const w = heldWeapon(subject);
+    if (w) {
+      text(el['weapon-name'], 'wn', subject.reloading > 0 ? `${w.def.name} · reloading` : w.def.name);
+      text(el.ammo, 'am', `${w.mag} <span>/ ${w.reserve}</span>`, 'innerHTML');
+    } else {
+      text(el['weapon-name'], 'wn', GEAR[subject.nadeType].name);
+      text(el.ammo, 'am', `${subject[subject.nadeType]} <span>G to cycle</span>`, 'innerHTML');
+    }
+    flag(el.ammo, 'ae', 'empty', !!w && w.mag === 0);
+    const slot = (name, label) => `<span class="${subject.current === name ? 'on' : ''}">${label}</span>`;
+    text(el.slots, 'sl', slot('primary', `1 ${subject.primary ? subject.primary.def.name : '-'}`) + slot('secondary', `2 ${subject.secondary.def.name}`)
+      + slot('nade', `4 ◆${subject.frag} ☁${subject.smoke} ✶${subject.flash}`) + (subject.kit ? '<span>KIT</span>' : ''), 'innerHTML');
+    flag(el.carry, 'cy', 'hidden', !(bomb.carrier === p && p.alive));
+    if (subject.using > 0) text(el['progress-label'], 'pl2', planted ? (subject.kit ? 'DEFUSING (KIT)' : 'DEFUSING') : 'PLANTING THE IGNITER');
+
+    // Centre prompt.
+    let msg = '';
+    if (m.phase === 'freeze') msg = `<b>Buy phase</b>Press B to buy · ${p.team === 'att' ? 'plan your hit on A or B' : 'take your positions'}`;
+    else if (m.phase === 'live' && m.roundClock < 3) msg = `<b>${p.team === 'att' ? 'Plant the Igniter' : 'Defend Kiln Hall and Silo Court'}</b>`;
+    else if (p.alive && planted && p.team === 'def' && Math.hypot(p.pos.x - bomb.x, p.pos.z - bomb.z) < 1.5 && p.using === 0) msg = 'Hold E to defuse';
+    else if (p.alive && bomb.state === 'dropped' && p.team === 'att' && Math.hypot(p.pos.x - bomb.x, p.pos.z - bomb.z) < 6) msg = 'The Igniter is on the ground, walk over it';
+    else if (p.alive && bomb.carrier === p && view.onSite && p.using === 0) msg = 'Hold E to plant';
+    text(el['center-msg'], 'cm', msg, 'innerHTML');
+    flag(el.spectate, 'sp', 'hidden', subject === p);
+    if (subject !== p) text(el.spectate, 'spt', `Spectating ${subject.name} · click for next`);
+
+    // Kill feed, radio and where you are.
+    let feed = '';
+    for (const f of state.feed) {
+      if (state.time - f.time > 7) continue;
+      if (!f.victim) feed += `<div><span class="c-${f.killerTeam}">${f.killer}</span><span class="w">${f.weapon}</span></div>`;
+      else feed += `<div class="${f.killer === p.name || f.victim === p.name ? 'mine' : ''}"><span class="c-${f.killerTeam}">${f.killer || 'The blast'}</span><span class="w">${f.weapon}${f.headshot ? ' ⊕' : ''}</span><span class="c-${f.victimTeam}">${f.victim}</span></div>`;
+    }
+    text(el.feed, 'fd', feed, 'innerHTML');
+    let radio = '';
+    for (const r of state.radio) if (r.team === p.team && state.time - r.time < 5) radio += `<div><span class="c-${r.team}">${r.name}:</span> ${r.text}</div>`;
+    text(el.radio, 'rd', radio, 'innerHTML');
+    text(el.location, 'lc', roomNameAt(state.map, subject.pos.x, subject.pos.z));
+
+    if (buyOpen) {
+      const can = canBuy(state, p);
+      const lossPay = Math.min(ECON.lossMax, ECON.loss + ECON.lossStep * m.lossStreak[p.team]);
+      text(el['buy-funds'], 'bf', `$${p.money}`);
+      text(el['buy-sub'], 'bs', can ? `Click an item or press its key; B or Esc closes. This round pays $${ECON.win} for a win, $${lossPay} for a loss, $${ECON.kill} a kill.` : 'Buy time is over.');
+      for (let i = 0; i < buyButtons.length; i++) {
+        const id = SHOP[i].id, price = priceOf(p, id);
+        text(prices[i], 'pr' + i, `$${price}`);
+        flag(buyButtons[i], 'bc' + i, 'cant', !can || p.money < price || (id === 'kit' && p.team !== 'def'));
+        flag(buyButtons[i], 'bo' + i, 'owned', (!!WEAPONS[id] && (p.primary?.def.id === id || p.secondary.def.id === id)) || (id === 'vest' && p.armor >= 100) || (id === 'helm' && p.helmet) || (id === 'kit' && p.kit));
       }
-
-      // Vitals and weapon of whoever the camera follows.
-      set(el['hp-val'], 'hp', String(Math.max(0, Math.ceil(subject.hp))));
-      style(el['hp-bar'], 'hpb', 'width', `${Math.max(0, subject.hp)}%`);
-      el.hp.classList.toggle('low', subject.hp <= 25);
-      set(el['armor-val'], 'ar', String(Math.ceil(subject.armor)) + (subject.helmet ? '+H' : ''));
-      style(el['armor-bar'], 'arb', 'width', `${subject.armor}%`);
-      set(el['money-val'], 'mo', `$${subject.money}`);
-      const w = heldWeapon(subject);
-      if (subject.current === 'nade') {
-        const names = { frag: 'Shard Grenade', smoke: 'Veil Smoke', flash: 'Glare Flash' };
-        set(el['weapon-name'], 'wn', names[subject.nadeType]);
-        set(el.ammo, 'am', `${subject[subject.nadeType]} <span>G to cycle</span>`, 'innerHTML');
-      } else if (w) {
-        set(el['weapon-name'], 'wn', subject.reloading > 0 ? `${w.def.name} · reloading` : w.def.name);
-        set(el.ammo, 'am', `${w.mag} <span>/ ${w.reserve}</span>`, 'innerHTML');
-        el.ammo.classList.toggle('empty', w.mag === 0);
+      let squad = '';
+      for (const a of state.actors) if (a.team === p.team) squad += `<span class="${a === p ? 'me' : ''}">${a.name} <b>$${a.money}</b> ${carried(a)}</span>`;
+      text(el['buy-squad'], 'bq', squad, 'innerHTML');
+    }
+    if (boardOpen) {
+      text(el['board-head'], 'bh', `<b class="c-att">${SIDES.att.name} ${m.score.att}</b> : <b class="c-def">${m.score.def} ${SIDES.def.name}</b><span>round ${m.round} · first to ${ROUND.toWin} · ★ round MVP</span>`, 'innerHTML');
+      let rows = '';
+      for (const [team] of teams) for (const a of state.actors) {
+        if (a.team !== team) continue;
+        rows += `<tr class="${a.alive ? '' : 'dead'} ${a === p ? 'me' : ''}"><td class="c-${team}">${a.name}${m.result && m.result.mvp === a ? ' ★' : ''}</td><td>${a.kills}</td><td>${a.assists}</td><td>${a.deaths}</td>`
+          + `<td>${a.damage}</td><td>${a.kills ? Math.round((a.headKills / a.kills) * 100) : 0}%</td><td>$${a.money}</td><td>${carried(a)}</td></tr>`;
       }
-      const slots = `<span class="${subject.current === 'primary' ? 'on' : ''}">1 ${subject.primary ? subject.primary.def.name : '-'}</span>`
-        + `<span class="${subject.current === 'secondary' ? 'on' : ''}">2 ${subject.secondary.def.name}</span>`
-        + `<span class="${subject.current === 'nade' ? 'on' : ''}">4 ◆${subject.frag} ☁${subject.smoke} ✶${subject.flash}</span>`
-        + (subject.kit ? '<span>KIT</span>' : '');
-      set(el.slots, 'sl', slots, 'innerHTML');
-      el.carry.classList.toggle('hidden', !(bomb.carrier === p && p.alive));
-
-      // Crosshair gap follows spread, so it opens when you run and closes when you stop.
-      const sp = w ? spreadOf(subject) : 0.02;
-      const gap = Math.round(4 + (sp / Math.tan((view.fov * Math.PI) / 360)) * (window.innerHeight / 2));
-      const gk = Math.min(gap, 80);
-      style(ticks[0], 'c0', 'top', `${-gk - 8}px`);
-      style(ticks[1], 'c1', 'top', `${gk}px`);
-      style(ticks[2], 'c2', 'left', `${-gk - 8}px`);
-      style(ticks[3], 'c3', 'left', `${gk}px`);
-      const scoped = subject.scoped;
-      el.scope.classList.toggle('hidden', !scoped);
-      style(el.crosshair, 'cv', 'visibility', scoped || (w && w.def.kind === 'sniper' && subject === p) ? 'hidden' : 'visible');
-
-      hitT -= dt;
-      style(el.hitmarker, 'hmo', 'opacity', hitT > 0 ? '1' : '0');
-      el.hitmarker.classList.toggle('head', hitHead);
-
-      // Damage direction: an arc that points toward whoever hit you.
-      const since = state.time - subject.hurtTime;
-      if (since < 1.2) {
-        const ang = Math.atan2(subject.hurtX - subject.pos.x, subject.hurtZ - subject.pos.z);
-        const rel = -(ang - (subject.yaw + Math.PI));
-        style(el.hurt, 'hr', 'transform', `rotate(${rel}rad)`);
-        style(el.hurt, 'ho', 'opacity', String(Math.max(0, 1 - since / 1.2).toFixed(2)));
-      } else style(el.hurt, 'ho', 'opacity', '0');
-      style(el.flash, 'fl', 'opacity', Math.min(1, subject.flashed / 1.4).toFixed(2));
-      style(el.vignette, 'vg', 'opacity', subject.alive ? Math.max(0, (40 - subject.hp) / 40).toFixed(2) : '0');
-
-      // Plant / defuse progress.
-      const using = subject.using > 0;
-      el.progress.classList.toggle('hidden', !using);
-      if (using) {
-        const defusing = planted;
-        set(el['progress-label'], 'pgl', defusing ? (subject.kit ? 'DEFUSING (KIT)' : 'DEFUSING') : 'PLANTING THE IGNITER');
-        const frac = defusing ? bomb.defuseProgress : bomb.plantProgress;
-        style(el['progress-fill'], 'pgf', 'width', `${Math.min(100, frac * 100).toFixed(1)}%`);
-      }
-
-      // Center prompt.
-      let msg = '';
-      if (m.phase === 'freeze') msg = `<b>Buy phase</b>Press B to buy · ${state.settings.side === 'att' ? 'plan your hit on A or B' : 'take your positions'}`;
-      else if (m.phase === 'live' && m.roundClock < 3) msg = `<b>${state.settings.side === 'att' ? 'Plant the Igniter' : 'Defend Kiln Hall and Silo Court'}</b>`;
-      else if (p.alive && bomb.state === 'planted' && p.team === 'def' && Math.hypot(p.pos.x - bomb.x, p.pos.z - bomb.z) < 1.5 && !using) msg = 'Hold E to defuse';
-      else if (p.alive && bomb.state === 'dropped' && p.team === 'att' && Math.hypot(p.pos.x - bomb.x, p.pos.z - bomb.z) < 6) msg = 'The Igniter is on the ground, walk over it';
-      else if (p.alive && bomb.carrier === p && view.onSite && !using) msg = 'Hold E to plant';
-      set(el['center-msg'], 'cm', msg, 'innerHTML');
-
-      // Spectating after death.
-      el.spectate.classList.toggle('hidden', subject === p);
-      if (subject !== p) set(el.spectate, 'sp', `Spectating ${subject.name} · click for next`);
-
-      // Kill feed and radio.
-      let feed = '';
-      for (const f of state.feed) {
-        if (state.time - f.time > 7) continue;
-        const mine = f.killer === 'You' || f.victim === 'You';
-        if (!f.victim) feed += `<div><span class="c-${f.killerTeam}">${f.killer}</span><span class="w">${f.weapon}</span></div>`;
-        else feed += `<div class="${mine ? 'mine' : ''}"><span class="c-${f.killerTeam}">${f.killer || 'The blast'}</span><span class="w">${f.weapon}${f.headshot ? ' ⊕' : ''}</span><span class="c-${f.victimTeam}">${f.victim}</span></div>`;
-      }
-      set(el.feed, 'fd', feed, 'innerHTML');
-      let radio = '';
-      for (const r of state.radio) if (r.team === p.team && state.time - r.time < 5) radio += `<div><span class="c-${r.team}">${r.name}:</span> ${r.text}</div>`;
-      set(el.radio, 'rd', radio, 'innerHTML');
-
-      set(el.location, 'lc', roomNameAt(state.map, subject.pos.x, subject.pos.z));
-      drawMinimap(state, subject);
-
-      if (!el.buy.classList.contains('hidden')) {
-        const can = canBuy(state, p);
-        set(el['buy-sub'], 'bs', can ? `Funds $${p.money}. Click or press the key. B or Esc closes.` : 'Buy time is over.');
-        for (const b of buyButtons) {
-          const id = b.dataset.id;
-          const price = priceOf(p, id);
-          b.querySelector('.price').textContent = `$${price}`;
-          b.classList.toggle('cant', !can || p.money < price || (id === 'kit' && p.team !== 'def'));
-          const owned = (WEAPONS[id] && (p.primary?.def.id === id || p.secondary.def.id === id)) || (id === 'helm' && p.helmet) || (id === 'kit' && p.kit);
-          b.classList.toggle('owned', !!owned);
-        }
-      }
-      if (!el.board.classList.contains('hidden')) {
-        let rows = '';
-        for (const team of ['att', 'def']) {
-          for (const a of state.actors) {
-            if (a.team !== team) continue;
-            rows += `<tr class="${a.alive ? '' : 'dead'} ${a === p ? 'me' : ''}"><td class="c-${team}">${a.name}</td><td>${a.kills}</td><td>${a.deaths}</td><td>$${a.money}</td><td>${a.primary ? a.primary.def.name : a.secondary.def.name}</td></tr>`;
-          }
-        }
-        set(el['board-body'], 'bb', rows, 'innerHTML');
-      }
-      bannerT -= dt;
-      if (bannerT <= 0) el.banner.classList.add('hidden');
-    },
-  };
+      text(el['board-body'], 'bb', rows, 'innerHTML');
+    }
+  }
 
   function drawMinimap(state, subject) {
     mm.drawImage(base, 0, 0);
@@ -224,6 +206,7 @@ export function createHud() {
     for (const a of state.actors) {
       if (!a.alive) continue;
       const friendly = a.team === state.player.team;
+      // Enemies show only while one of your side has eyes on them.
       if (!friendly && state.time - a.seenBy[state.player.team] > 1.5) continue;
       mm.fillStyle = SIDES[a.team].css;
       mm.strokeStyle = friendly ? '#000' : '#fff';
@@ -241,4 +224,25 @@ export function createHud() {
       if (bomb.carrier === a && friendly) { mm.fillStyle = '#ffb03a'; mm.fillRect(a.pos.x * s + 3, a.pos.z * s - 6, 4, 4); }
     }
   }
+
+  return {
+    buyButtons,
+    showHud(on) { el.hud.classList.toggle('hidden', !on); },
+    flashHit(head, dmg) { hitT = 0.18; dmgT = 0.7; hitHead = head; text(el.dmg, 'dv', `-${dmg}`); flag(el.dmg, 'dh', 'head', head); },
+    buyMessage(msg) { el['buy-msg'].textContent = msg; },
+    setBuyOpen(open) { buyOpen = open; el.buy.classList.toggle('hidden', !open); el['buy-msg'].textContent = ''; },
+    showBoard(on) { boardOpen = on; flag(el.board, 'bd', 'hidden', !on); },
+    banner(title, sub, color) {
+      el['banner-title'].textContent = title;
+      el['banner-title'].style.color = color;
+      el['banner-sub'].textContent = sub;
+      bannerT = 3.5;
+    },
+    update(state, dt, view) {
+      if (!baseDrawn) drawBase(state.map);
+      fast(state, dt, view, view.subject);
+      if (frames++ % 6 === 0) panels(state, view, view.subject);
+      drawMinimap(state, view.subject);
+    },
+  };
 }

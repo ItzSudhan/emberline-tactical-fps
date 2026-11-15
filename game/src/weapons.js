@@ -9,7 +9,7 @@ import { emit, makeNoise } from './state.js';
 import { throwGrenade } from './grenades.js';
 import { clamp, dirFromAngles } from './util.js';
 
-const worldHit = makeHit();
+const coverHit = makeHit(), wallHit = makeHit();
 const dir = { x: 0, y: 0, z: 0 };
 
 // Cone half-angle (radians) the next shot can stray by.
@@ -135,7 +135,12 @@ function fire(state, a, w) {
 
 function traceBullet(state, shooter, ox, oy, oz, dx, dy, dz, def, tracer) {
   const maxT = 160;
-  let bestT = raycast(state.map, ox, oy, oz, dx, dy, dz, maxT, worldHit);
+  // Two casts: one stops at anything solid, one ignores soft cover (crates, pot pallets, barriers).
+  // A body found between the two was hiding behind soft cover and takes the round at a reduced
+  // damage; weapons with too little penetration stop at the first.
+  const coverT = raycast(state.map, ox, oy, oz, dx, dy, dz, maxT, coverHit);
+  let bestT = def.pen >= 0.55 ? raycast(state.map.hard, ox, oy, oz, dx, dy, dz, maxT, wallHit) : coverT;
+  const wallT = bestT;
   let victim = null, zone = 'body';
   const actors = state.actors;
   for (let i = 0; i < actors.length; i++) {
@@ -159,18 +164,22 @@ function traceBullet(state, shooter, ox, oy, oz, dx, dy, dz, def, tracer) {
     }
   }
   const end = Math.min(bestT, maxT);
+  const through = bestT > coverT + 0.01; // the round went on past soft cover
   if (tracer) {
     const e = emit(state, 'tracer', ox, oy, oz);
     e.a = ox + dx * end; e.b = oy + dy * end; e.c = oz + dz * end; e.actor = shooter;
   }
+  if (coverT < maxT && (through || !victim)) impact(state, coverHit, through ? 'wood' : '');
   if (victim) {
     const mult = zone === 'head' ? def.headMult : zone === 'legs' ? 0.75 : 1;
-    const dmg = def.dmg * mult * Math.pow(def.falloff, end / 25);
+    const dmg = def.dmg * mult * Math.pow(def.falloff, end / 25) * (through ? def.pen * 0.75 : 1);
     applyDamage(state, victim, shooter, dmg, zone, def.pen, def.id);
     const e = emit(state, 'blood', ox + dx * end, oy + dy * end, oz + dz * end);
     e.a = dx; e.b = dy; e.c = dz; e.text = zone; e.actor = shooter;
-  } else if (worldHit.t < maxT) {
-    const e = emit(state, 'impact', worldHit.x, worldHit.y, worldHit.z);
-    e.a = worldHit.nx; e.b = worldHit.ny; e.c = worldHit.nz;
-  }
+  } else if (through && wallT < maxT) impact(state, wallHit, '');
+}
+
+function impact(state, hit, text) {
+  const e = emit(state, 'impact', hit.x, hit.y, hit.z);
+  e.a = hit.nx; e.b = hit.ny; e.c = hit.nz; e.text = text;
 }

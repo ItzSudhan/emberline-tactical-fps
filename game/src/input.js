@@ -45,8 +45,8 @@ export function createInput(target) {
     lock() { if (!locked && target.requestPointerLock) { const p = target.requestPointerLock(); if (p && p.catch) p.catch(() => {}); } },
     unlock() { if (locked) document.exitPointerLock(); },
     down: (code) => held.has(code),
-    // Returns and clears the queue of key codes pressed since the last call.
-    takePresses() { const out = pressed.slice(); pressed.length = 0; return out; },
+    // Key codes pressed since the frame loop last emptied the queue; the reader sets its length to 0.
+    presses: pressed,
     // Copies this frame's mouse motion into a reused snapshot and clears the accumulator.
     takeMouse() { snap.dx = mouse.dx; snap.dy = mouse.dy; snap.wheel = mouse.wheel; mouse.dx = mouse.dy = mouse.wheel = 0; return snap; },
   };

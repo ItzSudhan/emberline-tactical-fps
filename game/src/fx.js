@@ -1,5 +1,6 @@
 // Visual effects, all from fixed pools allocated once: tracers, bullet marks, sparks / dust / blood
-// particles, frag fireballs, smoke clouds and the muzzle flash light.
+// particles, frag fireballs, smoke clouds and the muzzle flash light. Anything that should glow is
+// given a colour brighter than 1.0, which the bloom in post.js picks up.
 
 import * as THREE from 'three';
 import { softDot } from './textures.js';
@@ -8,7 +9,7 @@ const TRACERS = 24, MARKS = 80, PARTICLES = 400, BLASTS = 4, PUFFS = 16;
 
 export function createFx(scene) {
   const tracerGeo = new THREE.BoxGeometry(0.025, 0.025, 1).translate(0, 0, -0.5);
-  const tracerMat = new THREE.MeshBasicMaterial({ color: 0xffe0a0, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
+  const tracerMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.2, 2.3, 1.1), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
   const tracers = [];
   for (let i = 0; i < TRACERS; i++) {
     const m = new THREE.Mesh(tracerGeo, tracerMat);
@@ -38,12 +39,12 @@ export function createFx(scene) {
   const pGeo = new THREE.BufferGeometry();
   pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
   pGeo.setAttribute('color', new THREE.BufferAttribute(pCol, 3));
-  const points = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.07, vertexColors: true, map: softDot('#fff', 'rgba(255,255,255,0)'), transparent: true, depthWrite: false }));
+  const points = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.055, vertexColors: true, map: softDot('#fff', 'rgba(255,255,255,0)'), transparent: true, depthWrite: false }));
   points.frustumCulled = false;
   scene.add(points);
   let pNext = 0;
 
-  const blastMat = new THREE.MeshBasicMaterial({ color: 0xffa040, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
+  const blastMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(3.6, 1.7, 0.6), transparent: true, blending: THREE.AdditiveBlending, depthWrite: false });
   const blasts = [];
   for (let i = 0; i < BLASTS; i++) {
     const m = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), blastMat.clone());
@@ -55,7 +56,7 @@ export function createFx(scene) {
   let blastNext = 0;
 
   // Smoke: a cluster of soft sprites per live smoke slot.
-  const smokeTex = softDot('rgba(236,230,220,0.95)', 'rgba(220,214,204,0)');
+  const smokeTex = softDot('rgba(205,190,172,0.95)', 'rgba(190,176,160,0)');
   const smokeClouds = [];
   for (let s = 0; s < 8; s++) {
     const group = new THREE.Group();
@@ -104,12 +105,14 @@ export function createFx(scene) {
       m.userData.dir.set(x1 - x0, y1 - y0, z1 - z0).divideScalar(len);
       m.visible = true;
     },
-    impact(x, y, z, nx, ny, nz) {
+    // A bullet mark with sparks and dust, or a burst of splinters where a round punched through cover.
+    impact(x, y, z, nx, ny, nz, splinters) {
       const m = marks[markNext++ % MARKS];
       m.position.set(x + nx * 0.01, y + ny * 0.01, z + nz * 0.01);
       m.lookAt(x + nx, y + ny, z + nz);
       m.visible = true;
-      spawnParticles(x, y, z, nx, ny, nz, 6, 1, 0.8, 0.45, 2.5, 9, 0.25);
+      if (splinters) spawnParticles(x, y, z, nx, ny, nz, 14, 0.62, 0.4, 0.22, 2.2, 7, 0.5);
+      else spawnParticles(x, y, z, nx, ny, nz, 6, 1.7, 1.2, 0.55, 2.5, 9, 0.25);
       spawnParticles(x, y, z, nx, ny, nz, 5, 0.75, 0.6, 0.45, 1.2, 2, 0.6);
     },
     blood(x, y, z, dx, dy, dz, head) {

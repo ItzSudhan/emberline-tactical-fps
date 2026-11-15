@@ -1,4 +1,31 @@
 <!doctype html>
+<!--
+  EMBERLINE · Kilnworks. A round-based 5v5 tactical shooter: the Stokers plant the Igniter at Kiln Hall (A)
+  or Silo Court (B), the Kilnwatch hold both sites and defuse it. First squad to seven rounds, sides swap
+  after six. Everything on screen is made by the code below: the map is a grid in mapdata.js, every texture
+  is painted on a canvas, every sound is synthesised, and no image, model or audio file ships.
+
+  A map of the code, in the order the modules are loaded:
+    main.js      frame loop: fixed 60 Hz simulation steps from an accumulator, interpolated rendering
+    config.js    every tunable: movement, round rules, economy, six guns, armour, three grenades, bot skill
+    state.js     the one state object, plus the event and noise rings other systems read
+    mapdata.js   Kilnworks: named rooms, two sites with three ways into each, cover, holds and routes
+    nav.js       A* over the grid for the bots
+    sim.js       one tick: bots think, bodies move, weapons fire, grenades fly, the round advances
+    actors.js    movement with acceleration, friction, counter-strafing, crouch, jump; armour and damage
+    physics.js   collision and ray casts against the height grid; nothing allocates
+    weapons.js   spread that punishes moving, jumping and spraying; climbing recoil; head, body and leg
+                 hit volumes; rounds that punch through crates at a cost
+    grenades.js  bouncing frag, smoke that blocks sight, flash that blinds whoever faces it
+    round.js     buy phase, live, post-round; plant, fuse, defuse; win, loss-streak and kill money; half time
+    bots.js      sight cones, hearing, reaction time, aim that settles; routes, executes with smoke and
+                 flash, anchors that hold angles and rotate on calls, retakes, cover when hurt or reloading
+    hud.js       health, armour, money, ammunition, round clock, score, minimap, kill feed, buy menu, scoreboard
+    view.js, mapview.js, textures.js, fx.js, models.js, post.js   everything drawn
+    input.js, controls.js, audio.js   keyboard and mouse, and synthesised sound
+  The simulation imports nothing from three.js or the DOM; tools/soak.mjs in the repository plays whole
+  bot matches in Node to balance it. The screenshots are unstaged frames of bot matches (see main.js, ?demo).
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -12,15 +39,17 @@
 
 <div id="hud" class="hidden">
   <div id="topbar">
-    <div class="team att"><div><div class="tname">VANGUARD</div><div class="pips" id="pips-att"></div></div><b id="score-att">0</b></div>
+    <div class="team att" id="team-att"><div><div class="tname">STOKERS</div><div class="pips" id="pips-att"></div></div><b id="score-att">0</b></div>
     <div id="clock"><span id="round-label">ROUND 1</span><b id="timer">1:45</b><span id="phase-label">BUY</span></div>
-    <div class="team def"><div><div class="tname" style="text-align:right">BASTION</div><div class="pips" id="pips-def"></div></div><b id="score-def">0</b></div>
+    <div class="team def" id="team-def"><div><div class="tname">KILNWATCH</div><div class="pips" id="pips-def"></div></div><b id="score-def">0</b></div>
   </div>
+  <div id="history"></div>
   <div id="minimap-wrap"><canvas id="minimap" width="200" height="165"></canvas><div id="location"></div></div>
   <div id="feed"></div>
   <div id="radio"></div>
   <div id="crosshair"><i></i><i></i><i></i><i></i><i class="dot"></i></div>
   <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+  <div id="dmg"></div>
   <div id="hurt"></div>
   <div id="center-msg"></div>
   <div id="progress" class="hidden"><div id="progress-label"></div><div class="bar"><i id="progress-fill"></i></div></div>
@@ -39,13 +68,17 @@
 
 <div id="banner" class="hidden"><b id="banner-title"></b><span id="banner-sub"></span></div>
 
-<div id="board" class="panel hidden"><table><thead><tr><th>PLAYER</th><th>K</th><th>D</th><th>FUNDS</th><th>WEAPON</th></tr></thead><tbody id="board-body"></tbody></table></div>
+<div id="board" class="panel hidden">
+  <div id="board-head"></div>
+  <table><thead><tr><th>PLAYER</th><th>K</th><th>A</th><th>D</th><th>DMG</th><th>HS</th><th>FUNDS</th><th>WEAPON</th></tr></thead><tbody id="board-body"></tbody></table>
+</div>
 
 <div id="buy" class="overlay hidden">
   <section class="panel">
-    <h2>Requisition</h2>
-    <p id="buy-sub">Click or press the key. B or Esc closes.</p>
+    <h2>Requisition <span id="buy-funds"></span></h2>
+    <p id="buy-sub"></p>
     <div id="buy-grid"></div>
+    <div id="buy-squad"></div>
     <div id="buy-msg"></div>
   </section>
 </div>
@@ -53,10 +86,10 @@
 <div id="menu" class="overlay">
   <section class="panel">
     <h1>EMBER<em>LINE</em></h1>
-    <p class="sub">Kilnworks, an abandoned ceramics plant in the red desert. Five against five, first to seven rounds.
-      <b class="c-att">Vanguard</b> must plant the Igniter at Kiln Hall (A) or Silo Court (B).
-      <b class="c-def">Bastion</b> holds both sites and defuses it. Buy between rounds, and stop moving before you shoot.</p>
-    <div class="row"><span>SIDE</span><button data-side="att" class="on">Vanguard (attack)</button><button data-side="def">Bastion (defend)</button></div>
+    <p class="sub">Kilnworks, an abandoned ceramics plant in the red desert. Five against five, first to seven rounds, sides swap after six.
+      The <b class="c-att">Stokers</b> must plant the Igniter at Kiln Hall (A) or Silo Court (B).
+      The <b class="c-def">Kilnwatch</b> hold both sites and defuse it. Buy between rounds, and stop moving before you shoot.</p>
+    <div class="row"><span>SIDE</span><button data-side="att" class="on">Stokers (attack)</button><button data-side="def">Kilnwatch (defend)</button></div>
     <div class="row"><span>BOTS</span><button data-diff="easy">Recruit</button><button data-diff="normal" class="on">Regular</button><button data-diff="hard">Veteran</button></div>
     <button id="play" class="go" type="button">Deploy</button>
     <div class="keys">
@@ -72,7 +105,7 @@
   </section>
 </div>
 
-<div id="pause" class="overlay hidden"><section class="panel" style="text-align:center"><h2 style="margin:0 0 8px">Paused</h2><p style="color:var(--muted);margin:0 0 14px">The round keeps running. Click to return to the fight.</p><button id="resume" class="go" type="button">Resume</button></section></div>
+<div id="pause" class="overlay hidden"><section class="panel"><h2>Paused</h2><p>The round waits for you. Click to return to the fight.</p><button id="resume" class="go" type="button">Resume</button></section></div>
 
 <div id="over" class="overlay hidden"><section class="panel"><h2 id="over-title">Victory</h2><p id="over-sub"></p><button id="again" class="go" type="button">Play again</button></section></div>
 
